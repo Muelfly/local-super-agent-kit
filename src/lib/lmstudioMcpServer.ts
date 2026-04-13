@@ -235,6 +235,7 @@ const buildSuperAgentStatusPayload = (
       reasoning: ['super_agent_reason', 'super_agent_delegate'],
       automation: ['super_agent_fetch', 'super_agent_notes', 'super_agent_tool_generate', 'super_agent_workflow_design'],
       workspace: ['super_agent_workspace_list', 'super_agent_workspace_read', 'super_agent_workspace_write', 'super_agent_shell'],
+      runtimeActions: ['super_agent_openclaw_agent', 'super_agent_hermes_agent'],
       visibility: ['super_agent_status', 'super_agent_automation_status', 'super_agent_workflows', 'super_agent_workflow_runs'],
       runtime: ['super_agent_runtime_status', 'super_agent_sandbox_status'],
     },
@@ -278,6 +279,7 @@ const buildServer = async (rootDir: string): Promise<McpServer> => {
         'Do not invent an extra in-package approval step before using workspace or shell tools when the user asked for action.',
         'Keep OpenJarvis, OpenClaw, Hermes, and NemoClaw internal unless you are diagnosing a runtime issue or the user asks for lane-level details.',
         'Use super_agent_reason and super_agent_delegate for internal reasoning or delegation through packaged runtimes.',
+        'Use super_agent_openclaw_agent and super_agent_hermes_agent when you want the runtime-native agent behavior instead of the thinner compatibility layer.',
         'Use super_agent_workspace_list, super_agent_workspace_read, super_agent_workspace_write, and super_agent_shell for direct local action.',
         'Use super_agent_fetch, super_agent_notes, super_agent_tool_generate, and super_agent_workflow_design for deterministic automation through the control plane.',
         'Use super_agent_automation_status, super_agent_workflows, and super_agent_workflow_runs when you need visibility into the hidden workflow engine.',
@@ -449,6 +451,72 @@ const buildServer = async (rootDir: string): Promise<McpServer> => {
           systemPrompt,
           temperature,
         ));
+      } catch (error) {
+        return asToolResult(error instanceof Error ? error.message : String(error), true);
+      }
+    },
+  );
+
+  server.registerTool(
+    'super_agent_openclaw_agent',
+    {
+      description: 'Run a direct OpenClaw agent turn through the packaged runtime instead of the thinner compatibility chat path.',
+      inputSchema: z.object({
+        prompt: z.string().min(1).describe('Prompt or task for the OpenClaw runtime'),
+        agent: z.string().optional().describe('Optional OpenClaw agent id override'),
+        sessionId: z.string().optional().describe('Optional explicit OpenClaw session id'),
+        thinking: z.enum(['off', 'minimal', 'low', 'medium', 'high', 'xhigh']).optional().describe('Optional OpenClaw thinking level'),
+        timeoutSeconds: z.number().int().min(1).max(600).optional().describe('Optional OpenClaw timeout in seconds'),
+        local: z.boolean().optional().describe('Run via the embedded local agent path instead of the gateway path'),
+      }),
+    },
+    async ({ prompt, agent, sessionId, thinking, timeoutSeconds, local }) => {
+      try {
+        return asToolResult(await callControlPlane(config, '/api/runtime.openclaw.agent', {
+          prompt,
+          agent,
+          sessionId,
+          thinking,
+          timeoutSeconds,
+          local,
+        }));
+      } catch (error) {
+        return asToolResult(error instanceof Error ? error.message : String(error), true);
+      }
+    },
+  );
+
+  server.registerTool(
+    'super_agent_hermes_agent',
+    {
+      description: 'Run a direct Hermes Agent turn through the packaged runtime with yolo-style local action defaults.',
+      inputSchema: z.object({
+        prompt: z.string().min(1).describe('Prompt or task for Hermes Agent'),
+        model: z.string().optional().describe('Optional model override for Hermes'),
+        toolsets: z.array(z.string().min(1)).optional().describe('Optional Hermes toolsets override; defaults to a broad local-action set'),
+        skills: z.array(z.string().min(1)).optional().describe('Optional Hermes skills preload list'),
+        maxTurns: z.number().int().min(1).max(90).optional().describe('Maximum Hermes tool-calling turns'),
+        timeoutMs: z.number().int().min(1).max(300000).optional().describe('Optional timeout in milliseconds'),
+        yolo: z.boolean().optional().describe('Bypass Hermes dangerous-command prompts when true; defaults to true'),
+        quiet: z.boolean().optional().describe('Request quiet programmatic output; defaults to true'),
+        worktree: z.boolean().optional().describe('Run Hermes in an isolated git worktree'),
+        checkpoints: z.boolean().optional().describe('Enable Hermes filesystem checkpoints'),
+      }),
+    },
+    async ({ prompt, model, toolsets, skills, maxTurns, timeoutMs, yolo, quiet, worktree, checkpoints }) => {
+      try {
+        return asToolResult(await callControlPlane(config, '/api/runtime.hermes.agent', {
+          prompt,
+          model,
+          toolsets,
+          skills,
+          maxTurns,
+          timeoutMs,
+          yolo,
+          quiet,
+          worktree,
+          checkpoints,
+        }));
       } catch (error) {
         return asToolResult(error instanceof Error ? error.message : String(error), true);
       }

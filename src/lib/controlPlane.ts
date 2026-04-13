@@ -6,8 +6,8 @@ import path from 'node:path';
 import type { RuntimeConfig } from './env.js';
 import { resolveConfiguredModelMatch } from './lmStudio.js';
 import { ensureN8nAutomationAccess, getN8nAccessStatus, listN8nExecutions, listN8nWorkflows } from './n8n.js';
-import { commandExists, runShellCommand } from './shell.js';
-import { checkN8n, checkOpenJarvis } from './services.js';
+import { commandExists, runCommand, runShellCommand } from './shell.js';
+import { buildOpenClawEnvironment, checkN8n, checkOpenJarvis, runHermesCommand } from './services.js';
 import {
   generateToolSurface,
   getGeneratedSurfacePath,
@@ -114,6 +114,28 @@ type WorkspaceShellRequest = {
   timeoutMs?: number;
 };
 
+type OpenClawAgentRequest = {
+  prompt?: string;
+  agent?: string;
+  sessionId?: string;
+  thinking?: 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+  timeoutSeconds?: number;
+  local?: boolean;
+};
+
+type HermesAgentRequest = {
+  prompt?: string;
+  model?: string;
+  toolsets?: string[];
+  skills?: string[];
+  maxTurns?: number;
+  timeoutMs?: number;
+  yolo?: boolean;
+  quiet?: boolean;
+  worktree?: boolean;
+  checkpoints?: boolean;
+};
+
 const MAX_TEXT_PREVIEW = 20_000;
 const MAX_WORKSPACE_LIST_ENTRIES = 500;
 const MAX_WORKSPACE_READ_LINES = 400;
@@ -121,6 +143,10 @@ const MAX_WORKSPACE_WRITE_BYTES = 1_000_000;
 const MAX_WORKSPACE_COMMAND_OUTPUT = 25_000;
 const DEFAULT_WORKSPACE_SHELL_TIMEOUT_MS = 120_000;
 const MAX_WORKSPACE_SHELL_TIMEOUT_MS = 300_000;
+const DEFAULT_OPENCLAW_AGENT_TIMEOUT_SECONDS = 120;
+const DEFAULT_HERMES_AGENT_TIMEOUT_MS = 180_000;
+const DEFAULT_HERMES_MAX_TURNS = 12;
+const DEFAULT_HERMES_TOOLSETS = ['terminal', 'file', 'web', 'code_execution', 'todo', 'memory', 'clarify', 'delegation'];
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -186,6 +212,22 @@ const truncateText = (value: string, maxLength: number): { text: string; truncat
     text: `${value.slice(0, maxLength)}\n...[truncated]`,
     truncated: true,
   };
+};
+
+const quoteCommandValue = (value: string): string => {
+  if (!value || !/[\s"&()^<>|]/u.test(value)) {
+    return value;
+  }
+
+  if (process.platform === 'win32') {
+    return `"${value.replace(/"/gu, '""')}"`;
+  }
+
+  return `'${value.replace(/'/gu, `'\\''`)}'`;
+};
+
+const quotePowerShellValue = (value: string): string => {
+  return `'${value.replace(/'/gu, `''`)}'`;
 };
 
 const writeJsonFile = async (filePath: string, payload: unknown): Promise<void> => {
@@ -612,6 +654,30 @@ const writeWorkflowDesignDraft = async (
   return filePath;
 };
 
+const parseJsonTail = (raw: string): unknown | null => {
+  const lines = raw.split(/\r?\n/u);
+
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    if (!lines[index].trim().startsWith('{')) {
+      continue;
+    }
+
+    const candidate = lines.slice(index).join('\n').trim();
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
+};
+
+const parseSessionIdFromOutput = (raw: string): string | null => {
+  const match = /session_id:\s*([^\r\n]+)/iu.exec(raw);
+  return match?.[1]?.trim() || null;
+};
+
 const validateCandidateTool = async (config: RuntimeConfig, tool: ToolDefinition): Promise<ValidationReport> => {
   const mergedSurface = await readMergedToolSurface(config);
   const checks: ValidationCheck[] = [];
@@ -988,6 +1054,178 @@ const handleWorkspaceShell = async (config: RuntimeConfig, request: IncomingMess
   }
 };
 
+const handleOpenClawAgent = async (config: RuntimeConfig, request: IncomingMessage, response: ServerResponse): Promise<void> => {
+  const payload = await parseJsonBody<OpenClawAgentRequest>(request);
+  const prompt = typeof payload.prompt === 'string' ? payload.prompt.trim() : '';
+
+  if (!prompt) {
+    sendJson(response, 400, { ok: false, error: 'prompt is required.' });
+    return;
+  }
+
+  if (!config.openClawEnabled) {
+    sendJson(response, 400, { ok: false, error: 'OpenClaw is disabled in this package configuration.' });
+    return;
+  }
+
+  try {
+    const sessionId = typeof payload.sessionId === 'string' && payload.sessionId.trim()
+      ? payload.sessionId.trim()
+      : `super-agent-${randomUUID()}`;
+    const thinking = payload.thinking ?? 'minimal';
+    const timeoutSeconds = clampInteger(payload.timeoutSeconds, DEFAULT_OPENCLAW_AGENT_TIMEOUT_SECONDS, 1, 600);
+    const args = ['--log-level', 'error', 'agent', '--json', '-m', prompt, '--session-id', sessionId, '--thinking', thinking, '--timeout', String(timeoutSeconds)];
+
+    if (typeof payload.agent === 'string' && payload.agent.trim()) {
+      args.push('--agent', payload.agent.trim());
+    }
+
+    if (payload.local === true) {
+      args.push('--local');
+    }
+
+    const result = process.platform === 'win32'
+      ? await runCommand(
+          'powershell.exe',
+          [
+            '-NoProfile',
+            '-Command',
+            [
+              `$env:OPENCLAW_STATE_DIR = ${quotePowerShellValue(config.openClawStateDir)}`,
+              `$env:OPENCLAW_CONFIG_PATH = ${quotePowerShellValue(config.openClawConfigPath)}`,
+              ['openclaw', ...args.map((value) => quotePowerShellValue(value))].join(' '),
+            ].join('; '),
+          ],
+          config.rootDir,
+          {},
+          { timeoutMs: timeoutSeconds * 1000 + 10_000 },
+        )
+      : await runShellCommand(
+          [quoteCommandValue(config.openClawCommand), ...args.map((value) => quoteCommandValue(value))].join(' '),
+          config.rootDir,
+          buildOpenClawEnvironment(config),
+          { timeoutMs: timeoutSeconds * 1000 + 10_000 },
+        );
+    const parsed = parseJsonTail(result.stdout);
+    const stdout = truncateText(result.stdout, MAX_WORKSPACE_COMMAND_OUTPUT);
+    const stderr = truncateText(result.stderr, MAX_WORKSPACE_COMMAND_OUTPUT);
+    const recordFile = await persistRecord(config, 'openclaw-agent-runs', sessionId, {
+      prompt,
+      args,
+      code: result.code,
+      timedOut: result.timedOut === true,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      parsed,
+      capturedAt: new Date().toISOString(),
+    });
+
+    sendJson(response, 200, {
+      ok: result.code === 0,
+      runtime: 'openclaw',
+      sessionId,
+      code: result.code,
+      timedOut: result.timedOut === true,
+      parsed,
+      stdout: stdout.text,
+      stderr: stderr.text,
+      stdoutTruncated: stdout.truncated,
+      stderrTruncated: stderr.truncated,
+      recordFile: relativeToRoot(config, recordFile),
+    });
+  } catch (error) {
+    sendJson(response, 400, {
+      ok: false,
+      error: error instanceof Error ? error.message : 'Failed to run OpenClaw agent.',
+    });
+  }
+};
+
+const handleHermesAgent = async (config: RuntimeConfig, request: IncomingMessage, response: ServerResponse): Promise<void> => {
+  const payload = await parseJsonBody<HermesAgentRequest>(request);
+  const prompt = typeof payload.prompt === 'string' ? payload.prompt.trim() : '';
+
+  if (!prompt) {
+    sendJson(response, 400, { ok: false, error: 'prompt is required.' });
+    return;
+  }
+
+  if (!config.hermesEnabled) {
+    sendJson(response, 400, { ok: false, error: 'Hermes is disabled in this package configuration.' });
+    return;
+  }
+
+  try {
+    const timeoutMs = clampInteger(payload.timeoutMs, DEFAULT_HERMES_AGENT_TIMEOUT_MS, 1, MAX_WORKSPACE_SHELL_TIMEOUT_MS);
+    const maxTurns = clampInteger(payload.maxTurns, DEFAULT_HERMES_MAX_TURNS, 1, 90);
+    const toolsets = normalizeStringList(payload.toolsets, 16);
+    const skills = normalizeStringList(payload.skills, 16);
+    const args = ['chat', '-q', prompt, '--source', 'tool', '--max-turns', String(maxTurns)];
+
+    if (payload.quiet !== false) {
+      args.push('-Q');
+    }
+
+    if (payload.yolo !== false) {
+      args.push('--yolo');
+    }
+
+    if (typeof payload.model === 'string' && payload.model.trim()) {
+      args.push('-m', payload.model.trim());
+    }
+
+    const resolvedToolsets = toolsets.length > 0 ? toolsets : DEFAULT_HERMES_TOOLSETS;
+    if (resolvedToolsets.length > 0) {
+      args.push('-t', resolvedToolsets.join(','));
+    }
+
+    if (skills.length > 0) {
+      args.push('-s', skills.join(','));
+    }
+
+    if (payload.worktree === true) {
+      args.push('--worktree');
+    }
+
+    if (payload.checkpoints === true) {
+      args.push('--checkpoints');
+    }
+
+    const result = await runHermesCommand(config, args, { timeoutMs });
+    const sessionId = parseSessionIdFromOutput(result.stdout);
+    const stdout = truncateText(result.stdout, MAX_WORKSPACE_COMMAND_OUTPUT);
+    const stderr = truncateText(result.stderr, MAX_WORKSPACE_COMMAND_OUTPUT);
+    const recordFile = await persistRecord(config, 'hermes-agent-runs', sessionId || prompt, {
+      prompt,
+      args,
+      code: result.code,
+      timedOut: result.timedOut === true,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      sessionId,
+      capturedAt: new Date().toISOString(),
+    });
+
+    sendJson(response, 200, {
+      ok: result.code === 0,
+      runtime: 'hermes',
+      sessionId,
+      code: result.code,
+      timedOut: result.timedOut === true,
+      stdout: stdout.text,
+      stderr: stderr.text,
+      stdoutTruncated: stdout.truncated,
+      stderrTruncated: stderr.truncated,
+      recordFile: relativeToRoot(config, recordFile),
+    });
+  } catch (error) {
+    sendJson(response, 400, {
+      ok: false,
+      error: error instanceof Error ? error.message : 'Failed to run Hermes agent.',
+    });
+  }
+};
+
 const handleWebFetch = async (config: RuntimeConfig, request: IncomingMessage, response: ServerResponse): Promise<void> => {
   const body = await parseJsonBody<{ url?: string }>(request);
   const url = typeof body.url === 'string' ? body.url.trim() : '';
@@ -1319,6 +1557,16 @@ const routeControlPlaneRequest = async (
 
   if (url.pathname === '/api/workspace.shell') {
     await handleWorkspaceShell(config, request, response);
+    return;
+  }
+
+  if (url.pathname === '/api/runtime.openclaw.agent') {
+    await handleOpenClawAgent(config, request, response);
+    return;
+  }
+
+  if (url.pathname === '/api/runtime.hermes.agent') {
+    await handleHermesAgent(config, request, response);
     return;
   }
 

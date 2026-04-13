@@ -60,7 +60,7 @@ const waitForService = async (check: () => Promise<ServiceStatus>, attempts = 20
   return last;
 };
 
-const buildOpenClawEnvironment = (config: RuntimeConfig): Record<string, string> => ({
+export const buildOpenClawEnvironment = (config: RuntimeConfig): Record<string, string> => ({
   OPENCLAW_STATE_DIR: config.openClawStateDir,
   OPENCLAW_CONFIG_PATH: config.openClawConfigPath,
 });
@@ -238,11 +238,15 @@ const resolveHermesLinuxCommand = async (config: RuntimeConfig): Promise<string 
   return `${wslHome}/.hermes/hermes-agent/venv/bin/hermes`;
 };
 
-const runHermesCommand = async (config: RuntimeConfig, args: string[]) => {
+export const runHermesCommand = async (
+  config: RuntimeConfig,
+  args: string[],
+  options: { timeoutMs?: number } = {},
+) => {
   if (process.platform !== 'win32') {
     return runCommand(config.hermesCommand, args, config.rootDir, {
       HERMES_HOME: config.hermesHomeDir,
-    });
+    }, options);
   }
 
   const linuxCommand = await resolveHermesLinuxCommand(config);
@@ -255,7 +259,7 @@ const runHermesCommand = async (config: RuntimeConfig, args: string[]) => {
   }
 
   const script = `HERMES_HOME=${quotePosixArg(toWslPath(config.hermesHomeDir))} ${quotePosixArg(linuxCommand)} ${args.map(quotePosixArg).join(' ')}`;
-  return runCommand('wsl.exe', ['--', 'bash', '-lc', script], config.rootDir);
+  return runCommand('wsl.exe', ['--', 'bash', '-lc', script], config.rootDir, {}, options);
 };
 
 const parseHermesBinding = (content: string): HermesBinding | null => {
@@ -634,11 +638,7 @@ const ensureOpenClawLmStudioBinding = async (config: RuntimeConfig): Promise<Ser
       '--gateway-port',
       String(parseGatewayPort(config.openClawBaseUrl)),
       '--skip-channels',
-      '--skip-skills',
-      '--skip-search',
-      '--skip-ui',
-      '--skip-health',
-      '--no-install-daemon',
+      '--skip-daemon',
       '--json',
     ],
     config.rootDir,

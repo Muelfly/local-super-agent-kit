@@ -88,6 +88,7 @@ The repo now ships a local LM Studio MCP server registered as `super-agent`, so 
 - `super_agent_status` for the unified product contract and lane readiness
 - `super_agent_automation_status`, `super_agent_workflows`, and `super_agent_workflow_runs` for hidden workflow visibility
 - `super_agent_reason` and `super_agent_delegate` for internal reasoning or delegation without breaking the front-door UX
+- `super_agent_openclaw_agent` and `super_agent_hermes_agent` for runtime-native OpenClaw and Hermes turns when you want their own agent behavior directly
 - `super_agent_workspace_list`, `super_agent_workspace_read`, `super_agent_workspace_write`, and `super_agent_shell` for direct local workspace and shell actions
 - `super_agent_runtime_status` and `super_agent_sandbox_status` for runtime and sandbox visibility when diagnostics are needed
 - `super_agent_fetch`, `super_agent_notes`, `super_agent_tool_generate`, and `super_agent_workflow_design` through the local control plane
@@ -150,6 +151,8 @@ NemoClaw's upstream onboard still checks host ports `8080` and `18789` during pr
 If local Windows plus WSL keeps colliding on `8080`, the supported escape hatch is to manage OpenShell separately instead of forcing NemoClaw's default onboard path. In practice that means starting an OpenShell gateway on another host port or remote host, then re-running `nemoclaw onboard` against that separately managed environment.
 
 OpenClaw is still the sharpest edge in the packaged chain, but bootstrap now manages that edge inside the repo instead of leaning on user-home global state. The package provisions repo-local OpenClaw state under `.runtime/openclaw`, keeps Hermes config under `.runtime/hermes`, binds both runtimes to the loaded LM Studio chat model, and fails fast when LM Studio only exposes embeddings or no chat-capable model at all. `OPENCLAW_MODEL` now acts as the package target for matching the loaded LM Studio model rather than as a cosmetic hint.
+
+The packaged runtime is now less artificially constrained than before. OpenClaw onboarding still stays channel-quiet by default, but it no longer skips skills, search, UI, and health setup just to preserve a thinner starter shape. Super Agent also exposes runtime-native wrappers for direct OpenClaw and Hermes turns, instead of only exposing the thinner compatibility path.
 
 The LM Studio bundle step now resolves the real local `modelKey` from `lms ls --json`, loads that concrete key with the stable API identifier `local-super-agent`, and only then starts OpenJarvis, OpenClaw, Hermes, and NemoClaw. That prevents helper lanes from racing ahead of model load completion.
 

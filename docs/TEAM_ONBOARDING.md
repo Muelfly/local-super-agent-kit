@@ -165,6 +165,8 @@ The visible MCP tool surface inside LM Studio now centers on Super Agent naming:
 - `super_agent_status`
 - `super_agent_reason`
 - `super_agent_delegate`
+- `super_agent_openclaw_agent`
+- `super_agent_hermes_agent`
 - `super_agent_workspace_list`
 - `super_agent_workspace_read`
 - `super_agent_workspace_write`
@@ -179,6 +181,8 @@ The visible MCP tool surface inside LM Studio now centers on Super Agent naming:
 `tool.generate` now writes to `generated/tool-surface.generated.json`, regenerates `generated/n8n/*.workflow.json`, validates the artifacts, and tries to import the result into local n8n.
 
 `n8n.workflow.design` now adds a higher-level design pass on top of that loop. It writes a workflow draft to `.runtime/workflow-designs`, records suggested steps and open questions, and can optionally scaffold the generated workflow/tool artifacts before you decide whether to import them into n8n.
+
+If you want runtime-native behavior instead of the thinner compatibility layer, use `super_agent_openclaw_agent` or `super_agent_hermes_agent`. Those wrappers call the packaged OpenClaw and Hermes runtimes directly, while the workspace and shell tools remain available through the control plane for explicit local action.
 
 If you want an evaluation gate before promotion, set `OPENJARVIS_EVAL_COMMAND` locally. The command receives `AGENT_TOOL_NAME`, `AGENT_TOOL_SUMMARY`, `AGENT_WORKFLOW_FILE`, and `AGENT_GENERATED_SURFACE_FILE` in the environment.
 

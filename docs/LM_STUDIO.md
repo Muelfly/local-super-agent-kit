@@ -67,6 +67,8 @@ The MCP surface currently exposes:
 - `super_agent_workflow_runs`
 - `super_agent_reason`
 - `super_agent_delegate`
+- `super_agent_openclaw_agent`
+- `super_agent_hermes_agent`
 - `super_agent_workspace_list`
 - `super_agent_workspace_read`
 - `super_agent_workspace_write`
@@ -79,3 +81,5 @@ The MCP surface currently exposes:
 - `super_agent_workflow_design`
 
 This packaged variant is intentionally full-access on the local machine boundary. The Super Agent MCP surface can now enumerate the workspace, read files, write files, and execute shell commands directly. If you want stricter guardrails, apply them outside the starter through your packaging policy, runtime sandbox, or deployment environment.
+
+The MCP bridge now also exposes runtime-native entry points for OpenClaw and Hermes. Use those when you want the packaged runtimes to behave like themselves rather than only consuming them through the thinner compatibility chat layer.
