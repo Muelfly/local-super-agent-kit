@@ -4,6 +4,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { RuntimeConfig } from './env.js';
+import { ensureN8nAutomationAccess, getN8nAccessStatus, listN8nExecutions, listN8nWorkflows } from './n8n.js';
 import { commandExists, runShellCommand } from './shell.js';
 import { checkN8n, checkOpenJarvis } from './services.js';
 import {
@@ -43,6 +44,16 @@ type ToolGenerationRequest = {
   summary?: string;
   webhookPath?: string;
   inputSchema?: ToolInputField[];
+};
+
+type N8nWorkflowListRequest = {
+  limit?: number;
+  activeOnly?: boolean;
+};
+
+type N8nExecutionListRequest = {
+  limit?: number;
+  status?: string;
 };
 
 const MAX_TEXT_PREVIEW = 20_000;
@@ -598,8 +609,67 @@ const handleToolGenerate = async (config: RuntimeConfig, request: IncomingMessag
   });
 };
 
+const handleN8nStatus = async (config: RuntimeConfig, response: ServerResponse): Promise<void> => {
+  const status = await ensureN8nAutomationAccess(config);
+  sendJson(response, 200, {
+    ok: status.ok,
+    status,
+  });
+};
+
+const handleN8nWorkflows = async (config: RuntimeConfig, request: IncomingMessage, response: ServerResponse): Promise<void> => {
+  const payload = await parseJsonBody<N8nWorkflowListRequest>(request);
+
+  try {
+    const result = await listN8nWorkflows(config, {
+      limit: typeof payload.limit === 'number' ? payload.limit : undefined,
+      activeOnly: payload.activeOnly === true,
+    });
+
+    sendJson(response, 200, {
+      ok: true,
+      status: result.status,
+      workflows: result.workflows,
+      count: result.workflows.length,
+    });
+  } catch (error) {
+    sendJson(response, 400, {
+      ok: false,
+      error: error instanceof Error ? error.message : 'Failed to list n8n workflows.',
+      status: await getN8nAccessStatus(config),
+    });
+  }
+};
+
+const handleN8nExecutions = async (config: RuntimeConfig, request: IncomingMessage, response: ServerResponse): Promise<void> => {
+  const payload = await parseJsonBody<N8nExecutionListRequest>(request);
+
+  try {
+    const result = await listN8nExecutions(config, {
+      limit: typeof payload.limit === 'number' ? payload.limit : undefined,
+      status: typeof payload.status === 'string' ? payload.status : undefined,
+    });
+
+    sendJson(response, 200, {
+      ok: true,
+      status: result.status,
+      executions: result.executions,
+      count: result.executions.length,
+    });
+  } catch (error) {
+    sendJson(response, 400, {
+      ok: false,
+      error: error instanceof Error ? error.message : 'Failed to list n8n executions.',
+      status: await getN8nAccessStatus(config),
+    });
+  }
+};
+
 const handleHealth = async (config: RuntimeConfig, response: ServerResponse): Promise<void> => {
-  const openJarvis = await checkOpenJarvis(config);
+  const [openJarvis, n8nAccess] = await Promise.all([
+    checkOpenJarvis(config),
+    getN8nAccessStatus(config),
+  ]);
   sendJson(response, 200, {
     ok: true,
     controlPlaneBaseUrl: config.controlPlaneBaseUrl,
@@ -611,6 +681,7 @@ const handleHealth = async (config: RuntimeConfig, response: ServerResponse): Pr
       detail: openJarvis.detail,
       evalHookConfigured: Boolean(config.openJarvisEvalCommand),
     },
+    n8n: n8nAccess,
   });
 };
 
@@ -642,6 +713,21 @@ const routeControlPlaneRequest = async (
 
   if (url.pathname === '/api/tool.generate') {
     await handleToolGenerate(config, request, response);
+    return;
+  }
+
+  if (url.pathname === '/api/n8n.status') {
+    await handleN8nStatus(config, response);
+    return;
+  }
+
+  if (url.pathname === '/api/n8n.workflows') {
+    await handleN8nWorkflows(config, request, response);
+    return;
+  }
+
+  if (url.pathname === '/api/n8n.executions') {
+    await handleN8nExecutions(config, request, response);
     return;
   }
 

@@ -7,6 +7,7 @@ This repository is a local super-agent starter, not a monolithic production cont
 It is meant to give teammates a portable local stack with clear ownership boundaries:
 
 - LM Studio: default local inference surface
+- LM Studio Chat: primary human-facing cockpit
 - local control plane: file-backed state, tool generation, evaluation, and promotion hooks
 - n8n: deterministic waits, retries, schedules, and webhook glue
 - OpenJarvis: optional local ops, telemetry, and evaluation lane
@@ -18,6 +19,7 @@ It is meant to give teammates a portable local stack with clear ownership bounda
 
 - semantic owner: the teammate's durable notes and knowledge surface
 - hot state: local runtime state, automation state, and ephemeral execution data, persisted locally under `.runtime`
+- interactive surface: LM Studio Chat for day-to-day operator prompts
 - ingress: replaceable adapter layer, not architectural owner
 - execution: local model runtime plus optional helper tools
 
@@ -35,9 +37,21 @@ The starter now has a minimal closed loop for generated tool surfaces:
 The base path should work without cloud vendor lock-in:
 
 - LM Studio local server is the default model endpoint
+- LM Studio Chat is the default user-facing surface
 - n8n is local by default
 - NVIDIA key usage is optional
 - shared MCP is optional
+
+## LM Studio Chat Front Door
+
+This starter should behave like one local product from the teammate's perspective.
+
+- LM Studio Chat is the default front door
+- the local control plane and n8n stay behind it as runtime surfaces
+- OpenClaw, NemoClaw, OpenJarvis, and similar helper dependencies should be attached behind LM Studio Chat rather than introduced as competing first-run chat UIs
+- if a teammate wants the highest-quality local chat first and the hardware allows it, point them to the Nemotron-3 Nano 30B profile before the 8B fallback
+
+The repo-local MCP server is the current attachment point for that front-door model. It lets LM Studio Chat call runtime tools without making OpenJarvis, OpenClaw, or NemoClaw into separate required user interfaces.
 
 ## Why This Skeleton Exists
 

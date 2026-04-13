@@ -30,6 +30,20 @@
       "problemMatcher": []
     },
     {
+      "label": "Start LM Studio MCP",
+      "type": "shell",
+      "command": "npm",
+      "args": ["run", "start:lmstudio-mcp"],
+      "problemMatcher": []
+    },
+    {
+      "label": "Install LM Studio MCP",
+      "type": "shell",
+      "command": "npm",
+      "args": ["run", "install:lmstudio-mcp"],
+      "problemMatcher": []
+    },
+    {
       "label": "Start OpenJarvis",
       "type": "shell",
       "command": "npm",

@@ -1,7 +1,9 @@
 #!/usr/bin/env node
-import { defaultRootDir, formatDoctorReport, formatOptionalLaneReport, runApplyProfile, runBootstrap, runChatSdkSummary, runDoctor, runGenerateToolSurface, runStartControlPlane, runStartN8n, runStartOpenJarvis, runStartOptionalLanes } from './lib/bootstrap.js';
+import { defaultRootDir, formatDoctorReport, formatOptionalLaneReport, runApplyProfile, runBootstrap, runChatSdkSummary, runDoctor, runGenerateToolSurface, runInstallLmStudioMcp, runStartControlPlane, runStartN8n, runStartOpenJarvis, runStartOptionalLanes } from './lib/bootstrap.js';
 import { serveControlPlane } from './lib/controlPlane.js';
 import { loadRuntimeConfig, type ProfileName } from './lib/env.js';
+import { printLmStudioMcpConfig } from './lib/lmstudioMcp.js';
+import { serveLmStudioMcp } from './lib/lmstudioMcpServer.js';
 
 const args = process.argv.slice(2);
 const command = args[0] ?? 'doctor';
@@ -81,6 +83,22 @@ const main = async (): Promise<void> => {
         server.once('close', () => resolve());
         server.once('error', reject);
       });
+      return;
+    }
+
+    case 'serve-lmstudio-mcp': {
+      await serveLmStudioMcp(rootDir);
+      return;
+    }
+
+    case 'install-lmstudio-mcp': {
+      const target = await runInstallLmStudioMcp(rootDir);
+      console.log(`lmstudio mcp installed: ${target}`);
+      return;
+    }
+
+    case 'print-lmstudio-mcp-config': {
+      console.log(printLmStudioMcpConfig(rootDir));
       return;
     }
 

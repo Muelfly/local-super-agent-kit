@@ -3,6 +3,7 @@ import { applyProfile, loadRuntimeConfig, type ProfileName, type RuntimeConfig }
 import { buildChatSdkSummary, checkChatSdk } from './chatSdk.js';
 import { promoteWorkflowBundleToN8n } from './controlPlane.js';
 import { ensureLmStudio, type ServiceStatus } from './lmStudio.js';
+import { installLmStudioMcpServer } from './lmstudioMcp.js';
 import { checkControlPlane, checkN8n, checkOpenJarvis, ensureControlPlane, ensureN8n, ensureNemoClaw, ensureOpenJarvis } from './services.js';
 import { generateToolSurface, readMergedToolSurface } from './workflows.js';
 
@@ -57,6 +58,7 @@ export const runDoctor = async (
 
 export const runBootstrap = async (rootDir: string, profile: ProfileName): Promise<DoctorReport> => {
   await applyProfile(rootDir, profile);
+  await installLmStudioMcpServer(rootDir);
   const config = await loadRuntimeConfig(rootDir);
   const generated = await generateToolSurface(config);
   const [lmstudio, n8n, controlplane, openjarvis, nemoclaw, chatsdk] = await Promise.all([
@@ -95,6 +97,10 @@ export const runStartOpenJarvis = async (rootDir: string): Promise<ServiceStatus
 export const runStartControlPlane = async (rootDir: string): Promise<ServiceStatus> => {
   const config = await loadRuntimeConfig(rootDir);
   return ensureControlPlane(config);
+};
+
+export const runInstallLmStudioMcp = async (rootDir: string): Promise<string> => {
+  return installLmStudioMcpServer(rootDir);
 };
 
 export const runStartOptionalLanes = async (rootDir: string): Promise<Record<string, ServiceStatus>> => {

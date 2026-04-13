@@ -13,6 +13,9 @@
     "apply-profile": "tsx src/cli.ts apply-profile",
     "doctor": "tsx src/cli.ts doctor",
     "start:control-plane": "tsx src/cli.ts start-control-plane",
+    "start:lmstudio-mcp": "node --import tsx src/cli.ts serve-lmstudio-mcp",
+    "install:lmstudio-mcp": "tsx src/cli.ts install-lmstudio-mcp",
+    "print:lmstudio-mcp": "tsx src/cli.ts print-lmstudio-mcp-config",
     "start:openjarvis": "tsx src/cli.ts start-openjarvis",
     "start:optional-lanes": "tsx src/cli.ts start-optional-lanes",
     "chat-sdk:summary": "tsx src/cli.ts chat-sdk-summary",
@@ -25,8 +28,10 @@
     "@chat-adapter/discord": "^4.25.0",
     "@chat-adapter/github": "^4.25.0",
     "@chat-adapter/state-memory": "^4.25.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "chat": "^4.25.0",
-    "dotenv": "^16.4.7"
+    "dotenv": "^16.4.7",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@types/node": "^22.15.17",

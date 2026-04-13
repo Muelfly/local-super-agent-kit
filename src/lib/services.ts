@@ -1,6 +1,7 @@
 import type { RuntimeConfig } from './env.js';
 import { commandExists, launchDetachedShell, runCommand, runShellCommand } from './shell.js';
 import type { ServiceStatus } from './lmStudio.js';
+import { ensureN8nAutomationAccess, getN8nAccessStatus, waitForN8nReachable } from './n8n.js';
 
 const buildModelsUrl = (baseUrl: string): string => `${baseUrl.replace(/\/$/u, '')}/models`;
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
@@ -42,29 +43,55 @@ export const ensureOpenJarvis = async (config: RuntimeConfig): Promise<ServiceSt
 };
 
 export const checkN8n = async (config: RuntimeConfig): Promise<ServiceStatus> => {
+  const status = await getN8nAccessStatus(config);
+  return {
+    ok: status.ok,
+    detail: status.detail,
+  };
+};
+
+export const ensureN8n = async (config: RuntimeConfig): Promise<ServiceStatus> => {
+  const initial = await getN8nAccessStatus(config);
   if (!config.n8nEnabled) {
     return { ok: true, detail: 'disabled' };
   }
 
-  try {
-    const response = await fetch(`${config.n8nBaseUrl.replace(/\/$/u, '')}/healthz`);
-    if (!response.ok) {
-      return { ok: false, detail: `HTTP ${response.status}` };
+  if (initial.reachable) {
+    if (initial.apiKeyReady || !config.n8nManagedByRepo || !initial.managedByRepo) {
+      return {
+        ok: initial.ok,
+        detail: initial.detail,
+      };
     }
-    return { ok: true, detail: 'reachable' };
-  } catch (error) {
-    return { ok: false, detail: error instanceof Error ? error.message : 'n8n unreachable' };
-  }
-};
 
-export const ensureN8n = async (config: RuntimeConfig): Promise<ServiceStatus> => {
-  const initial = await checkN8n(config);
-  if (initial.ok || !config.n8nEnabled) {
-    return initial;
+    const access = await ensureN8nAutomationAccess(config);
+    return {
+      ok: access.ok,
+      detail: access.detail,
+    };
   }
 
-  await runShellCommand(config.n8nStartCommand, config.rootDir);
-  return checkN8n(config);
+  const launch = await runShellCommand(config.n8nStartCommand, config.rootDir);
+  if (launch.code !== 0) {
+    return {
+      ok: false,
+      detail: launch.stderr || launch.stdout || 'n8n start command failed',
+    };
+  }
+
+  const reachable = await waitForN8nReachable(config);
+  if (!reachable) {
+    return {
+      ok: false,
+      detail: 'n8n start command returned, but the service did not become reachable in time',
+    };
+  }
+
+  const access = await ensureN8nAutomationAccess(config);
+  return {
+    ok: access.ok,
+    detail: access.detail,
+  };
 };
 
 export const checkControlPlane = async (config: RuntimeConfig): Promise<ServiceStatus> => {

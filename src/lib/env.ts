@@ -21,6 +21,11 @@ export type RuntimeConfig = {
   openJarvisBaseUrl: string;
   openJarvisApiKey: string;
   openJarvisServeCommand: string;
+  openJarvisModelHint: string;
+  openClawEnabled: boolean;
+  openClawBaseUrl: string;
+  openClawApiKey: string;
+  openClawModel: string;
   nemoClawEnabled: boolean;
   nemoClawCommand: string;
   nemoClawStatusArgs: string[];
@@ -35,6 +40,10 @@ export type RuntimeConfig = {
   n8nToolSurfaceFile: string;
   n8nGeneratedSurfaceFile: string;
   n8nPromoteCommand: string;
+  n8nManagedByRepo: boolean;
+  n8nApiKey: string;
+  n8nOwnerEmail: string;
+  n8nOwnerPassword: string;
   controlPlaneEnabled: boolean;
   controlPlaneHost: string;
   controlPlanePort: number;
@@ -158,6 +167,11 @@ export const loadRuntimeConfig = async (rootDir: string): Promise<RuntimeConfig>
     openJarvisBaseUrl: get('OPENJARVIS_BASE_URL', 'http://127.0.0.1:8000/v1'),
     openJarvisApiKey: get('OPENJARVIS_API_KEY'),
     openJarvisServeCommand: get('OPENJARVIS_SERVE_COMMAND'),
+    openJarvisModelHint: get('OPENJARVIS_MODEL_HINT'),
+    openClawEnabled: parseBoolean(get('OPENCLAW_ENABLED'), false),
+    openClawBaseUrl: get('OPENCLAW_BASE_URL'),
+    openClawApiKey: get('OPENCLAW_API_KEY'),
+    openClawModel: get('OPENCLAW_MODEL'),
     nemoClawEnabled: parseBoolean(get('NEMOCLAW_ENABLED'), false),
     nemoClawCommand: get('NEMOCLAW_COMMAND', 'nemoclaw'),
     nemoClawStatusArgs: get('NEMOCLAW_STATUS_ARGS', 'status').split(' ').map((item) => item.trim()).filter(Boolean),
@@ -172,6 +186,10 @@ export const loadRuntimeConfig = async (rootDir: string): Promise<RuntimeConfig>
     n8nToolSurfaceFile: get('N8N_TOOL_SURFACE_FILE', 'config/tools/default-surface.json'),
     n8nGeneratedSurfaceFile: get('N8N_GENERATED_SURFACE_FILE', 'generated/tool-surface.generated.json'),
     n8nPromoteCommand: get('N8N_PROMOTE_COMMAND'),
+    n8nManagedByRepo: parseBoolean(get('N8N_MANAGED_BY_REPO'), true),
+    n8nApiKey: get('N8N_API_KEY'),
+    n8nOwnerEmail: get('N8N_OWNER_EMAIL'),
+    n8nOwnerPassword: get('N8N_OWNER_PASSWORD'),
     controlPlaneEnabled: parseBoolean(get('CONTROL_PLANE_ENABLED'), true),
     controlPlaneHost,
     controlPlanePort,

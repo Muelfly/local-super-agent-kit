@@ -5,6 +5,7 @@ LM Studio-first local super-agent starter for VS Code teams.
 This repository is meant to give teammates a practical local runtime skeleton:
 
 - LM Studio as the default local model surface
+- LM Studio Chat as the primary human-facing cockpit
 - hardware profiles for 4060 Ti 8B and 3060 Ti 30B targets
 - local control plane for file-backed state, tool generation, and evaluation hooks
 - optional OpenJarvis lane for local ops, telemetry, and evaluation
@@ -19,6 +20,8 @@ This repository is meant to give teammates a practical local runtime skeleton:
 - core control plane: local scripts plus VS Code tasks
 - control-plane runtime: local HTTP service for durable state and promotion hooks
 - reasoning surface: LM Studio OpenAI-compatible endpoint
+- primary operator UI: LM Studio Chat
+- LM Studio integration layer: local MCP server launched from this repo
 - orchestration surface: local n8n
 - optional accelerators: OpenJarvis, NemoClaw, shared MCP
 - ingress skeleton: Chat SDK style multi-platform adapters under `src/chat-sdk/bot.ts`
@@ -43,7 +46,7 @@ If you plan to share this repo widely, keep the first-run path as close as possi
 
 1. Install Node.js 20 or later.
 2. Install Docker Desktop if you want the local n8n surface.
-3. Install LM Studio and enable its local server.
+3. Install LM Studio, keep the UI in Korean for packaged teammates, disable bundled auto-load prompts, and enable its local server.
 4. Copy `.env.example` to `.env.local` or use one of the hardware profile tasks.
 5. Run one of these:
    - `npm install`
@@ -54,10 +57,28 @@ If you plan to share this repo widely, keep the first-run path as close as possi
 
 ## Hardware Profiles
 
-- `4060ti-8b`: default local profile for Nemotron Nano 8B.
-- `3060ti-30b`: CPU-offload-friendly profile for Nemotron-3 Nano 30B.
+- `4060ti-8b`: lighter local fallback profile for Nemotron Nano 8B.
+- `3060ti-30b`: preferred chat-first profile when a teammate wants Nemotron-3 Nano 30B first in LM Studio Chat.
 
 These profiles do not force one vendor runtime forever. They are launch defaults for teammates.
+
+## LM Studio Chat First
+
+The package target should feel like one local product, not a pile of separate consoles.
+
+- LM Studio Chat should be the default day-to-day chat surface for teammates
+- Nemotron-3 Nano 30B should be the documented first-choice chat model when the hardware profile supports it
+- Nemotron Nano 8B should stay available as the lighter fallback profile
+- OpenClaw, NemoClaw, OpenJarvis, and other helper dependencies should sit behind LM Studio Chat through local server, gateway, MCP, or tool-calling integration instead of becoming separate required chat UIs
+
+The repo now ships a local LM Studio MCP server so LM Studio Chat can directly call:
+
+- `stack_status` for lane readiness
+- `n8n_status`, `n8n_workflows`, and `n8n_executions` for hidden workflow visibility
+- `openjarvis_chat` for helper-lane reasoning
+- `openclaw_chat` when an OpenClaw gateway is configured
+- `nemoclaw_status` for sandbox/runtime lane visibility
+- `web_fetch`, `notes_capture`, and `tool_generate` through the local control plane
 
 ## NVIDIA Key Friction
 
@@ -102,6 +123,10 @@ The starter keeps OpenJarvis and NemoClaw optional, but now bundles them more ex
 - `npm run start:optional-lanes` ensures OpenJarvis, checks or bootstraps NemoClaw if `NEMOCLAW_SETUP_COMMAND` is set, and prints Chat SDK ingress readiness too
 - bootstrap already includes these checks, but the dedicated commands are easier for teammates to rerun after they fix one optional lane
 
+These helper lanes should attach behind LM Studio Chat in the packaged experience rather than forcing teammates to operate multiple chat fronts.
+
+Use `npm run install:lmstudio-mcp` to write the repo MCP entry into `~/.lmstudio/mcp.json`. Bootstrap now does this automatically for the teammate path.
+
 ## Generated n8n Surface
 
 `npm run n8n:surface` reads `config/tools/default-surface.json` and writes starter workflows to `generated/n8n`.
@@ -115,6 +140,10 @@ The built-in starter tools now route through the local control plane:
 New generated tools start as generic handoff branches. They are immediately callable and record invocations, but you should replace them with dedicated control-plane handlers or richer n8n branches once they stabilize.
 
 Bootstrap now imports the generated workflow bundle into n8n as inactive review surfaces when the local dockerized n8n lane is available.
+
+When the repo-managed compose service owns the n8n port, bootstrap also provisions the initial owner and a local public API key under `.runtime/n8n/auth.json` so LM Studio Chat can inspect workflows without sending teammates through the n8n UI first.
+
+If port `5678` is already occupied by another n8n instance, set `N8N_MANAGED_BY_REPO=false` and `N8N_API_KEY=...` in `.env.local` so the package treats that instance as external instead of trying to auto-provision it.
 
 ## Long-Term Memory Note
 

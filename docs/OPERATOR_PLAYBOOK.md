@@ -23,6 +23,8 @@ The intended first-run contract is:
 4. run bootstrap for the right hardware profile
 5. confirm doctor output
 
+For teammate-facing packaging, also assume LM Studio opens in Korean and does not immediately push a bundled Gemma 4 download on first launch.
+
 Anything beyond that should be treated as an optional lane unless you are deliberately expanding the product surface.
 
 ## What Is Core Versus Optional
@@ -30,6 +32,7 @@ Anything beyond that should be treated as an optional lane unless you are delibe
 Core:
 
 - LM Studio local server
+- LM Studio Chat as the default user-facing console
 - local control plane
 - n8n local automation surface
 - VS Code tasks and local scripts
@@ -50,6 +53,7 @@ The Chat SDK skeleton is there to prove the ingress shape, not to become the new
 Prefer this split:
 
 - ingress handler receives event
+- LM Studio Chat owns the human-facing conversation surface
 - handler routes into local automation or agent runtime
 - local control plane owns file writes, durable ledgers, tool generation, and promotion hooks
 - n8n owns durable orchestration
@@ -90,6 +94,16 @@ If doctor says LM Studio is unreachable, the most common cause is that the deskt
 ### Optional NemoClaw Setup
 
 If `NEMOCLAW_SETUP_COMMAND` is blank, the starter will only report NemoClaw status. That is intentional so the first-run path stays light.
+
+### LM Studio Chat First
+
+The package should not ask teammates to choose among multiple assistant front ends on day one.
+
+- LM Studio Chat is the primary front door
+- OpenClaw, NemoClaw, OpenJarvis, and other helper dependencies should sit behind it through local runtime integration
+- if a teammate wants the strongest local chat experience first, direct them to the Nemotron-3 Nano 30B profile before the 8B fallback
+
+The repo-local MCP server is the current bridge for that integration. Install it with `npm run install:lmstudio-mcp`, or let bootstrap write `~/.lmstudio/mcp.json` automatically.
 
 ### Chat SDK State
 
