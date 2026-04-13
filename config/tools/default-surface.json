@@ -58,6 +58,35 @@
           "description": "Desired automation capability"
         }
       ]
+    },
+    {
+      "name": "n8n.workflow.design",
+      "summary": "Design an n8n workflow draft and optionally scaffold a local review workflow.",
+      "webhookPath": "agent/n8n-workflow-design",
+      "responseMode": "responseNode",
+      "inputSchema": [
+        {
+          "name": "goal",
+          "type": "string",
+          "required": true,
+          "description": "Desired workflow outcome"
+        },
+        {
+          "name": "name",
+          "type": "string",
+          "description": "Optional workflow or tool name override"
+        },
+        {
+          "name": "constraints",
+          "type": "array",
+          "description": "Optional hard constraints for the workflow draft"
+        },
+        {
+          "name": "promoteToN8n",
+          "type": "boolean",
+          "description": "Import the generated review workflow into n8n when true"
+        }
+      ]
     }
   ]
 }

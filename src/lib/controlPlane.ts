@@ -4,6 +4,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { RuntimeConfig } from './env.js';
+import { resolveConfiguredModelMatch } from './lmStudio.js';
 import { ensureN8nAutomationAccess, getN8nAccessStatus, listN8nExecutions, listN8nWorkflows } from './n8n.js';
 import { commandExists, runShellCommand } from './shell.js';
 import { checkN8n, checkOpenJarvis } from './services.js';
@@ -44,6 +45,37 @@ type ToolGenerationRequest = {
   summary?: string;
   webhookPath?: string;
   inputSchema?: ToolInputField[];
+};
+
+type WorkflowDesignRequest = ToolGenerationRequest & {
+  constraints?: string[];
+  integrateWithTools?: string[];
+  autoGenerateTool?: boolean;
+  promoteToN8n?: boolean;
+};
+
+type WorkflowDesignStep = {
+  key: string;
+  label: string;
+  kind: string;
+  summary: string;
+  nodeType?: string;
+  dependsOn?: string[];
+};
+
+type WorkflowDesignDraft = {
+  name: string;
+  workflowName: string;
+  summary: string;
+  goal: string;
+  webhookPath: string;
+  responseMode: 'responseNode' | 'lastNode';
+  inputSchema: ToolInputField[];
+  draftNodes: WorkflowDesignStep[];
+  constraints: string[];
+  integrateWithTools: string[];
+  openQuestions: string[];
+  nextActions: string[];
 };
 
 type N8nWorkflowListRequest = {
@@ -159,6 +191,112 @@ const normalizeInputSchema = (fields: ToolInputField[] | undefined): ToolInputFi
     .filter((field) => field.name && field.type);
 };
 
+const normalizeStringList = (values: unknown, maxItems = 12): string[] => {
+  if (!Array.isArray(values)) {
+    return [];
+  }
+
+  return values
+    .map((value) => (typeof value === 'string' ? value.trim() : ''))
+    .filter(Boolean)
+    .slice(0, maxItems);
+};
+
+const normalizeResponseMode = (value: unknown): 'responseNode' | 'lastNode' => {
+  return value === 'lastNode' ? 'lastNode' : 'responseNode';
+};
+
+const buildDefaultDraftNodes = (toolName: string, integrateWithTools: string[]): WorkflowDesignStep[] => {
+  const nodes: WorkflowDesignStep[] = [
+    {
+      key: 'webhook-intake',
+      label: 'Webhook Intake',
+      kind: 'trigger',
+      summary: 'Accept the workflow request over the generated webhook surface.',
+      nodeType: 'n8n-nodes-base.webhook',
+    },
+    {
+      key: 'shape-payload',
+      label: 'Shape Payload',
+      kind: 'transform',
+      summary: 'Normalize the inbound payload and stamp request metadata for downstream nodes.',
+      nodeType: 'n8n-nodes-base.set',
+      dependsOn: ['webhook-intake'],
+    },
+  ];
+
+  for (const tool of integrateWithTools) {
+    nodes.push({
+      key: sanitizeSlug(`tool-${tool}`),
+      label: `Call ${tool}`,
+      kind: 'tool',
+      summary: `Invoke the existing ${tool} surface when the workflow needs that reusable capability.`,
+      dependsOn: ['shape-payload'],
+    });
+  }
+
+  nodes.push(
+    {
+      key: 'control-plane-handoff',
+      label: 'Control Plane Handoff',
+      kind: 'control-plane',
+      summary: `Send the normalized payload into the ${toolName} control-plane branch or a dedicated future handler.`,
+      nodeType: 'n8n-nodes-base.httpRequest',
+      dependsOn: integrateWithTools.length > 0
+        ? integrateWithTools.map((tool) => sanitizeSlug(`tool-${tool}`))
+        : ['shape-payload'],
+    },
+    {
+      key: 'respond',
+      label: 'Respond',
+      kind: 'response',
+      summary: 'Return the final JSON result to the caller without exposing internal runtime details.',
+      nodeType: 'n8n-nodes-base.respondToWebhook',
+      dependsOn: ['control-plane-handoff'],
+    },
+  );
+
+  return nodes;
+};
+
+const normalizeDraftNodes = (
+  value: unknown,
+  toolName: string,
+  integrateWithTools: string[],
+): WorkflowDesignStep[] => {
+  if (!Array.isArray(value) || value.length === 0) {
+    return buildDefaultDraftNodes(toolName, integrateWithTools);
+  }
+
+  const nodes = value
+    .map((entry, index): WorkflowDesignStep | null => {
+      if (!entry || typeof entry !== 'object') {
+        return null;
+      }
+
+      const record = entry as Record<string, unknown>;
+      const label = typeof record.label === 'string' && record.label.trim()
+        ? record.label.trim()
+        : `Step ${index + 1}`;
+      const key = sanitizeSlug(typeof record.key === 'string' && record.key.trim() ? record.key : label);
+      const summary = typeof record.summary === 'string' && record.summary.trim()
+        ? record.summary.trim()
+        : `Implement ${label.toLowerCase()} in the generated workflow.`;
+
+      return {
+        key,
+        label,
+        kind: typeof record.kind === 'string' && record.kind.trim() ? record.kind.trim() : 'transform',
+        summary,
+        nodeType: typeof record.nodeType === 'string' && record.nodeType.trim() ? record.nodeType.trim() : undefined,
+        dependsOn: normalizeStringList(record.dependsOn).map((item) => sanitizeSlug(item)),
+      };
+    })
+    .filter((entry): entry is WorkflowDesignStep => entry !== null);
+
+  return nodes.length > 0 ? nodes : buildDefaultDraftNodes(toolName, integrateWithTools);
+};
+
 const normalizeSummary = (value: string | undefined, goal: string): string => {
   const fallback = `Generated tool surface for: ${goal.trim()}`;
   return (value?.trim() || fallback).slice(0, 200);
@@ -188,7 +326,13 @@ const resolveLmStudioModel = async (config: RuntimeConfig): Promise<string | nul
       return config.lmStudioModelHint || null;
     }
 
-    return models.includes(config.lmStudioModelHint) ? config.lmStudioModelHint : models[0];
+    const chatModels = models.filter((model) => !/embed|embedding/u.test(model.toLowerCase()));
+    const matched = resolveConfiguredModelMatch(chatModels, [config.lmStudioModelHint, ...config.lmStudioModelCandidates]);
+    if (matched) {
+      return matched;
+    }
+
+    return chatModels[0] || models[0];
   } catch {
     return config.lmStudioModelHint || null;
   }
@@ -263,6 +407,80 @@ const proposeToolViaLmStudio = async (
   }
 };
 
+const proposeWorkflowDesignViaLmStudio = async (
+  config: RuntimeConfig,
+  request: WorkflowDesignRequest,
+): Promise<Partial<WorkflowDesignDraft> | null> => {
+  if (!request.goal?.trim()) {
+    return null;
+  }
+
+  const model = await resolveLmStudioModel(config);
+  if (!model) {
+    return null;
+  }
+
+  const baseUrl = config.lmStudioBaseUrl.replace(/\/$/u, '');
+  const knownTools = (await readMergedToolSurface(config)).tools.map((tool) => tool.name);
+
+  try {
+    const response = await fetch(`${baseUrl}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model,
+        temperature: 0.2,
+        response_format: { type: 'json_object' },
+        messages: [
+          {
+            role: 'system',
+            content: [
+              'Return JSON only.',
+              'Design a local-first n8n workflow draft for deterministic automation.',
+              'Use ASCII only.',
+              'Fields: name, summary, webhookPath, responseMode, inputSchema, draftNodes, openQuestions, nextActions, constraints, integrateWithTools.',
+              'Each draftNodes item must contain key, label, kind, summary, and may include nodeType and dependsOn.',
+              'Prefer control-plane calls and existing local tools before inventing new remote dependencies.',
+              'The webhookPath must start with agent/.',
+            ].join(' '),
+          },
+          {
+            role: 'user',
+            content: JSON.stringify({
+              goal: request.goal,
+              requestedName: request.name,
+              requestedSummary: request.summary,
+              requestedWebhookPath: request.webhookPath,
+              requestedInputSchema: request.inputSchema,
+              constraints: request.constraints,
+              integrateWithTools: request.integrateWithTools,
+              knownTools,
+            }),
+          },
+        ],
+      }),
+    });
+
+    if (!response.ok) {
+      return null;
+    }
+
+    const payload = await response.json() as {
+      choices?: Array<{ message?: { content?: string } }>;
+    };
+    const content = payload.choices?.[0]?.message?.content;
+    if (!content) {
+      return null;
+    }
+
+    return JSON.parse(content) as Partial<WorkflowDesignDraft>;
+  } catch {
+    return null;
+  }
+};
+
 const buildCandidateTool = async (config: RuntimeConfig, request: ToolGenerationRequest): Promise<ToolDefinition> => {
   const goal = request.goal?.trim() || 'generated automation';
   const modelSuggestion = await proposeToolViaLmStudio(config, request);
@@ -274,6 +492,45 @@ const buildCandidateTool = async (config: RuntimeConfig, request: ToolGeneration
     responseMode: 'responseNode',
     inputSchema: normalizeInputSchema(request.inputSchema ?? modelSuggestion?.inputSchema),
   };
+};
+
+const buildWorkflowDesignDraft = async (
+  config: RuntimeConfig,
+  request: WorkflowDesignRequest,
+): Promise<WorkflowDesignDraft> => {
+  const goal = request.goal?.trim() || 'generated automation';
+  const suggestion = await proposeWorkflowDesignViaLmStudio(config, request);
+  const name = normalizeToolName(request.name ?? suggestion?.name, goal);
+  const integrateWithTools = normalizeStringList(request.integrateWithTools ?? suggestion?.integrateWithTools, 16);
+
+  return {
+    name,
+    workflowName: `tool.${name}`,
+    summary: normalizeSummary(request.summary ?? suggestion?.summary, goal),
+    goal,
+    webhookPath: normalizeWebhookPath(request.webhookPath ?? suggestion?.webhookPath, name),
+    responseMode: normalizeResponseMode(suggestion?.responseMode),
+    inputSchema: normalizeInputSchema(request.inputSchema ?? suggestion?.inputSchema),
+    draftNodes: normalizeDraftNodes(suggestion?.draftNodes, name, integrateWithTools),
+    constraints: normalizeStringList(request.constraints ?? suggestion?.constraints, 16),
+    integrateWithTools,
+    openQuestions: normalizeStringList(suggestion?.openQuestions, 12),
+    nextActions: normalizeStringList(suggestion?.nextActions, 12),
+  };
+};
+
+const writeWorkflowDesignDraft = async (
+  config: RuntimeConfig,
+  draft: WorkflowDesignDraft,
+  request: WorkflowDesignRequest,
+): Promise<string> => {
+  const filePath = resolveRuntimePath(config, 'workflow-designs', `${sanitizeSlug(draft.name)}.json`);
+  await writeJsonFile(filePath, {
+    generatedAt: new Date().toISOString(),
+    request,
+    draft,
+  });
+  return filePath;
 };
 
 const validateCandidateTool = async (config: RuntimeConfig, tool: ToolDefinition): Promise<ValidationReport> => {
@@ -609,6 +866,91 @@ const handleToolGenerate = async (config: RuntimeConfig, request: IncomingMessag
   });
 };
 
+const handleWorkflowDesign = async (config: RuntimeConfig, request: IncomingMessage, response: ServerResponse): Promise<void> => {
+  const payload = await parseJsonBody<WorkflowDesignRequest>(request);
+  if (!payload.goal?.trim()) {
+    sendJson(response, 400, { ok: false, error: 'goal is required.' });
+    return;
+  }
+
+  const draft = await buildWorkflowDesignDraft(config, payload);
+  const candidate: ToolDefinition = {
+    name: draft.name,
+    summary: draft.summary,
+    webhookPath: draft.webhookPath,
+    responseMode: draft.responseMode,
+    inputSchema: draft.inputSchema,
+  };
+  const candidateValidation = await validateCandidateTool(config, candidate);
+  const draftFile = await writeWorkflowDesignDraft(config, draft, payload);
+
+  if (!candidateValidation.ok) {
+    sendJson(response, 400, {
+      ok: false,
+      draft,
+      draftFile: relativeToRoot(config, draftFile),
+      candidate,
+      validation: candidateValidation,
+    });
+    return;
+  }
+
+  if (payload.autoGenerateTool === false) {
+    sendJson(response, 200, {
+      ok: true,
+      draft,
+      draftFile: relativeToRoot(config, draftFile),
+      candidate,
+      validation: candidateValidation,
+      next: 'Set autoGenerateTool=true to scaffold a review workflow and generated tool surface.',
+    });
+    return;
+  }
+
+  const generatedSurfacePath = await upsertGeneratedTool(config, candidate);
+  const writtenFiles = await generateToolSurface(config);
+  const workflowFile = getGeneratedWorkflowFilePath(config, candidate.name);
+  const artifactValidation = await validateGeneratedArtifacts(config, candidate, workflowFile);
+  const evaluation = {
+    status: 'skipped',
+    detail: 'Workflow design scaffolding skips the OpenJarvis eval hook by default.',
+  } satisfies EvaluationReport;
+  const promotion = payload.promoteToN8n === true && artifactValidation.ok
+    ? await promoteWorkflowToN8n(config, workflowFile)
+    : {
+        status: 'skipped',
+        detail: payload.promoteToN8n === true
+          ? 'Skipped because artifact validation did not pass.'
+          : 'Skipped because promoteToN8n was not requested.',
+      } satisfies PromotionReport;
+
+  const jobRecordFile = await persistRecord(config, 'workflow-design-jobs', candidate.name, {
+    goal: payload.goal,
+    candidate,
+    draft,
+    draftFile: relativeToRoot(config, draftFile),
+    generatedSurfacePath: relativeToRoot(config, generatedSurfacePath),
+    workflowFile: relativeToRoot(config, workflowFile),
+    validation: artifactValidation,
+    evaluation,
+    promotion,
+    writtenFiles: writtenFiles.map((filePath) => relativeToRoot(config, filePath)),
+  });
+
+  sendJson(response, 200, {
+    ok: artifactValidation.ok && promotion.status !== 'failed',
+    draft,
+    draftFile: relativeToRoot(config, draftFile),
+    candidate,
+    generatedSurfaceFile: relativeToRoot(config, generatedSurfacePath),
+    workflowFile: relativeToRoot(config, workflowFile),
+    validation: artifactValidation,
+    evaluation,
+    promotion,
+    jobRecordFile: relativeToRoot(config, jobRecordFile),
+  });
+};
+
 const handleN8nStatus = async (config: RuntimeConfig, response: ServerResponse): Promise<void> => {
   const status = await ensureN8nAutomationAccess(config);
   sendJson(response, 200, {
@@ -713,6 +1055,11 @@ const routeControlPlaneRequest = async (
 
   if (url.pathname === '/api/tool.generate') {
     await handleToolGenerate(config, request, response);
+    return;
+  }
+
+  if (url.pathname === '/api/n8n.workflow.design') {
+    await handleWorkflowDesign(config, request, response);
     return;
   }
 

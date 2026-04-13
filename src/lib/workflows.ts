@@ -218,6 +218,8 @@ const controlPlaneEndpointForTool = (config: RuntimeConfig, tool: ToolDefinition
       return `${baseUrl}/api/notes.capture`;
     case 'tool.generate':
       return `${baseUrl}/api/tool.generate`;
+    case 'n8n.workflow.design':
+      return `${baseUrl}/api/n8n.workflow.design`;
     default:
       return `${baseUrl}/api/tools/${encodeURIComponent(tool.name)}`;
   }
@@ -250,7 +252,7 @@ const createWorkflow = (config: RuntimeConfig, tool: ToolDefinition) => {
     settings: {},
     staticData: null,
     meta: {
-      generatedBy: 'local-super-agent-kit',
+      generatedBy: 'super-agent',
       toolName: tool.name,
       inputSchema: normalizeInputSchema(tool.inputSchema),
       controlPlaneBaseUrl: config.controlPlaneBaseUrl,

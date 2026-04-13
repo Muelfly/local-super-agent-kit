@@ -2,7 +2,8 @@ import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-const LM_STUDIO_MCP_SERVER_NAME = 'local-super-agent-kit';
+const LM_STUDIO_MCP_SERVER_NAME = 'super-agent';
+const LEGACY_LM_STUDIO_MCP_SERVER_NAMES = ['local-super-agent-kit'];
 
 type LmStudioProgramServer = {
   command: string;
@@ -61,6 +62,11 @@ export const printLmStudioMcpConfig = (rootDir: string): string => {
 export const installLmStudioMcpServer = async (rootDir: string): Promise<string> => {
   const filePath = resolveLmStudioMcpConfigPath();
   const config = await readExistingMcpConfig(filePath);
+
+  for (const legacyName of LEGACY_LM_STUDIO_MCP_SERVER_NAMES) {
+    delete config.mcpServers[legacyName];
+  }
+
   config.mcpServers[LM_STUDIO_MCP_SERVER_NAME] = buildLmStudioMcpServerConfig(rootDir);
 
   await mkdir(path.dirname(filePath), { recursive: true });

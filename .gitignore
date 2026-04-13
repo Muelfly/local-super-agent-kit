@@ -8,3 +8,10 @@ coverage/
 *.log
 .DS_Store
 Thumbs.db
+.openclaw/workspace-state.json
+AGENTS.md
+HEARTBEAT.md
+IDENTITY.md
+SOUL.md
+TOOLS.md
+USER.md

@@ -60,7 +60,7 @@ If you plan to share this repo widely, keep the first-run path as close as possi
 7. Run `npm run doctor` to confirm LM Studio, OpenJarvis, OpenClaw, Hermes, NemoClaw, n8n, and the local control plane are reachable.
 8. If any packaged chain runtime needs a manual retry after bootstrap, run `npm run start:super-agent-lanes`.
 
-`bootstrap:auto` detects the local hardware, writes a recommended install plan to `.runtime/install-plan.json`, applies the matching env overrides into `.env.local`, and can acquire or load the recommended LM Studio model bundle through the bundled `lms` CLI.
+`bootstrap:auto` detects the local hardware, writes a recommended install plan to `.runtime/install-plan.json`, applies the matching env overrides into `.env.local`, resolves friendly model hints to real LM Studio download and load keys, and waits for the chosen chat model to appear in the LM Studio API before helper lanes are treated as ready.
 
 ## Hardware Profiles
 
@@ -70,6 +70,8 @@ If you plan to share this repo widely, keep the first-run path as close as possi
 `bootstrap:auto` sits above these fixed profiles. It selects one curated bundle such as a balanced 4060 Ti 8GB path, a 4060 Ti 16GB hybrid path, or a 3060 Ti offload-first path, then layers the chosen model hints and candidate list on top of the closest base profile.
 
 These profiles do not force one vendor runtime forever. They are launch defaults for teammates.
+
+Helper lanes now follow candidate sets as well as primary hints. `OPENJARVIS_MODEL_CANDIDATES`, `OPENCLAW_MODEL_CANDIDATES`, `HERMES_MODEL_CANDIDATES`, and `NEMOCLAW_MODEL_CANDIDATES` inherit the LM Studio candidate list by default, so one preferred model does not become a hard lock on the packaged chain.
 
 ## LM Studio Chat First
 
@@ -81,14 +83,17 @@ The package target should feel like one local product, not a pile of separate co
 - OpenJarvis, OpenClaw, Hermes, and NemoClaw should ship with the package and sit behind LM Studio Chat through local server, gateway, MCP, or tool-calling integration instead of becoming separate first-run chat UIs
 - shared MCP can stay optional around that packaged core
 
-The repo now ships a local LM Studio MCP server so LM Studio Chat can directly call:
+The repo now ships a local LM Studio MCP server registered as `super-agent`, so LM Studio Chat can directly call:
 
-- `stack_status` for lane readiness
-- `n8n_status`, `n8n_workflows`, and `n8n_executions` for hidden workflow visibility
-- `openjarvis_chat` for helper-lane reasoning
-- `openclaw_chat` when the OpenClaw gateway and chat surface are both ready
-- `nemoclaw_status` for sandbox/runtime lane visibility
-- `web_fetch`, `notes_capture`, and `tool_generate` through the local control plane
+- `super_agent_status` for the unified product contract and lane readiness
+- `super_agent_automation_status`, `super_agent_workflows`, and `super_agent_workflow_runs` for hidden workflow visibility
+- `super_agent_reason` and `super_agent_delegate` for internal reasoning or delegation without breaking the front-door UX
+- `super_agent_runtime_status` and `super_agent_sandbox_status` for runtime and sandbox visibility when diagnostics are needed
+- `super_agent_fetch`, `super_agent_notes`, `super_agent_tool_generate`, and `super_agent_workflow_design` through the local control plane
+
+`npm install` now writes or refreshes the `super-agent` entry in `~/.lmstudio/mcp.json`, and `npm run doctor` refreshes it again as a safety net. That keeps the LM Studio tool bridge on the default path instead of making teammates remember a separate MCP registration step.
+
+The MCP instructions now explicitly tell LM Studio to present the experience as Super Agent regardless of which chat model is currently selected. The selected LM Studio model is treated as the reasoning shell, while the MCP tool surface is the product capability layer.
 
 ## NVIDIA Key Friction
 
@@ -135,13 +140,19 @@ The starter now treats OpenJarvis, OpenClaw, Hermes, and NemoClaw as one package
 - `npm run start:optional-lanes` remains as a backward-compatible alias for the same command surface
 - bootstrap already includes these checks, but the dedicated command is easier for teammates to rerun after they fix one chain stage
 
-On Windows, the default NemoClaw path expects WSL2 plus Docker Desktop and uses the official non-interactive onboard flow with a local Ollama provider. LM Studio remains the front door either way.
+On Windows, the default NemoClaw path expects WSL2 plus Docker Desktop and uses the official non-interactive onboard flow against LM Studio's OpenAI-compatible endpoint through the package-managed `custom` provider path.
 
-OpenClaw is still the sharpest edge in the packaged chain, but bootstrap now manages that edge inside the repo instead of leaning on user-home global state. The package provisions repo-local OpenClaw state under `.runtime/openclaw`, binds a custom `lmstudio` provider to the loaded LM Studio chat model, and fails fast when LM Studio only exposes embeddings or no chat-capable model at all. `OPENCLAW_MODEL` now acts as the package target for matching the loaded LM Studio model rather than as a cosmetic hint.
+NemoClaw's upstream onboard still checks host ports `8080` and `18789` during preflight. OpenShell itself supports a non-default gateway port through `openshell gateway start --port <port>`, so `8080` is an upstream default rather than an OpenShell constant. The practical limitation today is that NemoClaw's default onboard flow still assumes that default gateway port, while the dashboard forward remains centered on `18789` in the current upstream flow.
+
+If local Windows plus WSL keeps colliding on `8080`, the supported escape hatch is to manage OpenShell separately instead of forcing NemoClaw's default onboard path. In practice that means starting an OpenShell gateway on another host port or remote host, then re-running `nemoclaw onboard` against that separately managed environment.
+
+OpenClaw is still the sharpest edge in the packaged chain, but bootstrap now manages that edge inside the repo instead of leaning on user-home global state. The package provisions repo-local OpenClaw state under `.runtime/openclaw`, keeps Hermes config under `.runtime/hermes`, binds both runtimes to the loaded LM Studio chat model, and fails fast when LM Studio only exposes embeddings or no chat-capable model at all. `OPENCLAW_MODEL` now acts as the package target for matching the loaded LM Studio model rather than as a cosmetic hint.
+
+The LM Studio bundle step now resolves the real local `modelKey` from `lms ls --json`, loads that concrete key with the stable API identifier `local-super-agent`, and only then starts OpenJarvis, OpenClaw, Hermes, and NemoClaw. That prevents helper lanes from racing ahead of model load completion.
 
 These runtimes should attach behind LM Studio Chat in the packaged experience rather than forcing teammates to operate multiple chat fronts.
 
-Use `npm run install:lmstudio-mcp` to write the repo MCP entry into `~/.lmstudio/mcp.json`. Bootstrap now does this automatically for the teammate path.
+Use `npm run install:lmstudio-mcp` to force a manual refresh of the `super-agent` MCP entry in `~/.lmstudio/mcp.json`. `npm install`, bootstrap, and `npm run doctor` now all refresh that entry automatically and remove the legacy `local-super-agent-kit` entry.
 
 ## Generated n8n Surface
 
@@ -152,6 +163,7 @@ The built-in starter tools now route through the local control plane:
 - `web.fetch` performs a deterministic fetch and stores a runtime record
 - `notes.capture` writes a durable note capture record
 - `tool.generate` writes or updates `generated/tool-surface.generated.json`, regenerates workflows, validates artifacts, runs an optional OpenJarvis evaluation hook, and attempts an n8n import
+- `n8n.workflow.design` writes a workflow-design draft under `.runtime/workflow-designs`, can scaffold a review workflow/tool surface, and only imports to n8n when you explicitly request promotion
 
 New generated tools start as generic handoff branches. They are immediately callable and record invocations, but you should replace them with dedicated control-plane handlers or richer n8n branches once they stabilize.
 

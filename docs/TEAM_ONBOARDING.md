@@ -47,12 +47,12 @@ For OpenClaw specifically, read a green status as gateway or control reachabilit
 - generates starter n8n workflow files
 - starts the local control plane and checks its health
 - tries the bundled `lms server start` flow first when the LM Studio CLI is available, then launches the desktop app if needed
-- can acquire and load the recommended LM Studio model bundle through `lms get` and `lms load`
-- installs the repo LM Studio MCP entry into `~/.lmstudio/mcp.json`
+- can resolve friendly LM Studio hints to real download keys, acquire the matching bundle through `lms get`, load the concrete local `modelKey` through `lms load`, and wait until the LM Studio API reports the chat model as live
+- installs the repo `super-agent` LM Studio MCP entry into `~/.lmstudio/mcp.json`
 - provisions the repo-managed OpenJarvis launcher when it is missing and starts the packaged runtime
 - installs OpenClaw when it is missing and starts the packaged gateway runtime
 - installs Hermes when it is missing and restores the Windows shim when needed
-- runs the official non-interactive NemoClaw onboard flow and restores the repo-managed launcher when needed
+- runs the official non-interactive NemoClaw onboard flow against LM Studio's OpenAI-compatible endpoint and restores the repo-managed launcher when needed
 - starts local n8n through Docker Compose
 - provisions a repo-local n8n owner and public API key when the repo compose service is the active n8n instance
 - imports the generated workflow bundle into local n8n as inactive review surfaces when dockerized n8n is available
@@ -61,7 +61,19 @@ For OpenClaw specifically, read a green status as gateway or control reachabilit
 
 Fresh LM Studio installs on Windows can have the desktop app present while the local OpenAI-compatible server is still off. If that happens, `Doctor` now tries the bundled CLI path at `C:\Users\<you>\.lmstudio\bin\lms.exe server start` before it gives up.
 
+The package no longer treats helper-lane startup and LM Studio model load as unrelated work. Bootstrap and `Start Super-Agent Lanes` now reconcile the LM Studio model bundle first, then start OpenJarvis, OpenClaw, Hermes, and NemoClaw after the target chat model is visible on `/v1/models`.
+
+Helper lanes are no longer treated as one-model-only surfaces. The package keeps primary hints for first boot, but `OPENJARVIS_MODEL_CANDIDATES`, `OPENCLAW_MODEL_CANDIDATES`, `HERMES_MODEL_CANDIDATES`, and `NEMOCLAW_MODEL_CANDIDATES` inherit the LM Studio candidate set unless you narrow them explicitly.
+
+`npm install` now writes the repo `super-agent` LM Studio MCP entry into `~/.lmstudio/mcp.json`, and `Doctor` refreshes it again as a safety net. That keeps the MCP bridge on the default first-run path.
+
+NemoClaw still inherits upstream preflight checks for ports `8080` and `18789`. OpenShell can run on a different host gateway port, but NemoClaw's default onboard path still assumes the default OpenShell gateway port while the dashboard path remains centered on `18789` in the current upstream flow. If either port is unavailable on the Windows plus WSL stack, the package will surface that exact blocker instead of pretending the lane is healthy.
+
+If port `8080` is the recurring blocker, the supported fallback is to manage OpenShell separately: start the gateway on another host port or on a remote host, then rerun `nemoclaw onboard` against that separately managed environment instead of relying on the default all-in-one onboard path.
+
 The packaged UX should assume teammates talk to LM Studio Chat first. OpenJarvis, OpenClaw, Hermes, and NemoClaw belong behind that surface as built-in runtimes rather than as separate first-run consoles.
+
+When the LM Studio MCP surface is active, the expected user experience is “I am using Super Agent,” not “I am using model X plus a few tools.” The MCP server now brands itself as `super-agent`, exposes branded tool names, and instructs LM Studio to treat the currently selected chat model as the reasoning shell rather than the product identity.
 
 ## OpenClaw Chat Lane Reality Check
 
@@ -76,6 +88,11 @@ The package no longer depends on user-home OpenClaw auth for the default LM Stud
 - `.runtime/openclaw/openclaw.json` is now the package-local source of truth for the default OpenClaw LM Studio binding
 - `OPENCLAW_MODEL` is now the package target that gets matched against the loaded LM Studio chat model id
 - if doctor still fails, the first thing to inspect is usually LM Studio model load state, not `~/.openclaw/agents/main/agent/auth-profiles.json`
+
+Hermes and NemoClaw follow the same package-managed direction now.
+
+- Hermes writes its package-local config under `.runtime/hermes` instead of silently reusing an old user-home model binding
+- the default NemoClaw package path now uses the `custom` provider against LM Studio rather than assuming a separate Ollama default
 
 The repo-managed n8n auth state is written to `.runtime/n8n/auth.json`, which stays local and ignored by Git. That lets LM Studio Chat inspect workflows without sending teammates through manual owner setup and API-key creation in the n8n UI.
 
@@ -105,9 +122,11 @@ These are the repeatable commands teammates should keep handy:
 
 If `NEMOCLAW_SETUP_COMMAND` is blank, the runtime command will only report NemoClaw status. That is intentional: OpenClaw and Hermes are bundled by default, while NemoClaw stays secondary.
 
-If LM Studio is already running when the MCP entry is installed, restart LM Studio once so the Chat UI picks up the new tool bridge.
+If LM Studio is already running when the MCP entry is installed or refreshed, restart LM Studio once so the Chat UI picks up the new tool bridge.
 
 On Windows, `Start Super-Agent Lanes` expects WSL2 plus Docker Desktop so the default NemoClaw onboard command can complete.
+
+`Start OpenJarvis` and `Start Super-Agent Lanes` both reconcile the LM Studio model bundle first, so they can recover a missing chat-model load instead of just reporting downstream binding failures.
 
 ## NVIDIA Key Guidance
 
@@ -139,9 +158,21 @@ This starter already includes a thin Chat SDK ingress skeleton. Keep it thin.
 - OpenJarvis, OpenClaw, Hermes, and NemoClaw should ship with the package and attach behind LM Studio Chat
 - shared MCP can remain secondary
 
+The visible MCP tool surface inside LM Studio now centers on Super Agent naming:
+
+- `super_agent_status`
+- `super_agent_reason`
+- `super_agent_delegate`
+- `super_agent_fetch`
+- `super_agent_notes`
+- `super_agent_tool_generate`
+- `super_agent_workflow_design`
+
 ## Generated Tool Loop
 
 `tool.generate` now writes to `generated/tool-surface.generated.json`, regenerates `generated/n8n/*.workflow.json`, validates the artifacts, and tries to import the result into local n8n.
+
+`n8n.workflow.design` now adds a higher-level design pass on top of that loop. It writes a workflow draft to `.runtime/workflow-designs`, records suggested steps and open questions, and can optionally scaffold the generated workflow/tool artifacts before you decide whether to import them into n8n.
 
 If you want an evaluation gate before promotion, set `OPENJARVIS_EVAL_COMMAND` locally. The command receives `AGENT_TOOL_NAME`, `AGENT_TOOL_SUMMARY`, `AGENT_WORKFLOW_FILE`, and `AGENT_GENERATED_SURFACE_FILE` in the environment.
 

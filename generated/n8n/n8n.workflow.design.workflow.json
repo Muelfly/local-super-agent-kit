@@ -1,10 +1,10 @@
 {
-  "id": "workflow-780d1163b2e4",
-  "versionId": "4c00c92c-0697-625d-b660-681bbb09a336",
-  "name": "tool.web.fetch",
+  "id": "workflow-626d92ec5e79",
+  "versionId": "eeddd674-61af-a978-c6e7-e89d5d9f40b5",
+  "name": "tool.n8n.workflow.design",
   "nodes": [
     {
-      "id": "node-efaa9a798a47",
+      "id": "node-9789a71f43bc",
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
@@ -12,16 +12,16 @@
         240,
         300
       ],
-      "webhookId": "26817204-bd9c-fa6d-e2ec-a7318fe3cf19",
+      "webhookId": "532abf75-dbd8-5c1c-f0db-e19e9020a48a",
       "parameters": {
         "httpMethod": "POST",
-        "path": "agent/web-fetch",
+        "path": "agent/n8n-workflow-design",
         "responseMode": "responseNode",
         "options": {}
       }
     },
     {
-      "id": "node-d8aea7a84cca",
+      "id": "node-597fe2e7cbc9",
       "name": "Stamp Tool",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
@@ -33,25 +33,25 @@
         "assignments": {
           "assignments": [
             {
-              "id": "b3ae1ff0-bf50-ff91-fba0-a25febcf15ca",
+              "id": "58d9ba74-aba7-382a-061e-e223473dfbbe",
               "name": "tool",
-              "value": "web.fetch",
+              "value": "n8n.workflow.design",
               "type": "string"
             },
             {
-              "id": "7189d70d-fd49-d914-23a6-ce70b04cb8cc",
+              "id": "df2f9336-e6ba-e8e8-3671-919f35d607dd",
               "name": "summary",
-              "value": "Fetch a URL through a deterministic webhook lane.",
+              "value": "Design an n8n workflow draft and optionally scaffold a local review workflow.",
               "type": "string"
             },
             {
-              "id": "193a0c84-448f-d855-fe6f-762bc1749ecd",
+              "id": "6f21151c-63d1-3dd1-0066-9ec94bf3f1c1",
               "name": "payload",
               "value": "={{$json.body ?? $json}}",
               "type": "object"
             },
             {
-              "id": "a4d3197a-96ba-5a0d-eb49-5ba48fae5c4d",
+              "id": "8b9dd16e-15fc-3efa-50ee-198abc14ad18",
               "name": "receivedAt",
               "value": "={{$now}}",
               "type": "string"
@@ -62,7 +62,7 @@
       }
     },
     {
-      "id": "node-25292d33f278",
+      "id": "node-1014f2480b52",
       "name": "Control Plane",
       "type": "n8n-nodes-base.httpRequest",
       "typeVersion": 4.2,
@@ -72,7 +72,7 @@
       ],
       "parameters": {
         "method": "POST",
-        "url": "http://127.0.0.1:4391/api/web.fetch",
+        "url": "http://127.0.0.1:4391/api/n8n.workflow.design",
         "sendBody": true,
         "contentType": "json",
         "specifyBody": "json",
@@ -81,7 +81,7 @@
       }
     },
     {
-      "id": "node-411ea5924297",
+      "id": "node-3550e36aab4d",
       "name": "Respond",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
@@ -136,13 +136,31 @@
   "staticData": null,
   "meta": {
     "generatedBy": "super-agent",
-    "toolName": "web.fetch",
+    "toolName": "n8n.workflow.design",
     "inputSchema": [
       {
-        "name": "url",
+        "name": "goal",
         "type": "string",
         "required": true,
-        "description": "Absolute URL to fetch"
+        "description": "Desired workflow outcome"
+      },
+      {
+        "name": "name",
+        "type": "string",
+        "required": false,
+        "description": "Optional workflow or tool name override"
+      },
+      {
+        "name": "constraints",
+        "type": "array",
+        "required": false,
+        "description": "Optional hard constraints for the workflow draft"
+      },
+      {
+        "name": "promoteToN8n",
+        "type": "boolean",
+        "required": false,
+        "description": "Import the generated review workflow into n8n when true"
       }
     ],
     "controlPlaneBaseUrl": "http://127.0.0.1:4391"

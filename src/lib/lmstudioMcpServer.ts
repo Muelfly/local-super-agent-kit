@@ -2,7 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import * as z from 'zod/v4';
 import { loadRuntimeConfig, type RuntimeConfig } from './env.js';
-import { checkLmStudio } from './lmStudio.js';
+import { checkLmStudio, resolveConfiguredModelMatch } from './lmStudio.js';
 import { resolveLmStudioMcpConfigPath } from './lmstudioMcp.js';
 import { getN8nAccessStatus } from './n8n.js';
 import { checkControlPlane, checkHermes, checkN8n, checkNemoClaw, checkOpenClaw, checkOpenJarvis, ensureControlPlane } from './services.js';
@@ -64,6 +64,31 @@ const scorePreferredModel = (model: string): number => {
   return score;
 };
 
+const collectModelCandidates = (...groups: Array<string | string[] | undefined>): string[] => {
+  const seen = new Set<string>();
+  const merged: string[] = [];
+
+  for (const group of groups) {
+    const values = Array.isArray(group) ? group : [group];
+    for (const value of values) {
+      const trimmed = typeof value === 'string' ? value.trim() : '';
+      if (!trimmed) {
+        continue;
+      }
+
+      const key = trimmed.toLowerCase().replace(/[^a-z0-9]+/gu, '');
+      if (!key || seen.has(key)) {
+        continue;
+      }
+
+      seen.add(key);
+      merged.push(trimmed);
+    }
+  }
+
+  return merged;
+};
+
 const listModels = async (baseUrl: string, apiKey = ''): Promise<string[]> => {
   const response = await fetch(`${normalizeBaseUrl(baseUrl)}/models`, {
     headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {},
@@ -82,7 +107,7 @@ const resolvePreferredModel = async (
   baseUrl: string,
   apiKey: string,
   explicitModel: string | undefined,
-  configuredHint: string,
+  configuredCandidates: string[],
 ): Promise<string> => {
   if (explicitModel?.trim()) {
     return explicitModel.trim();
@@ -93,17 +118,9 @@ const resolvePreferredModel = async (
     throw new Error('No models were listed by the packaged runtime. Configure a model hint or load a model first.');
   }
 
-  if (configuredHint.trim()) {
-    const exactMatch = models.find((item) => item.toLowerCase() === configuredHint.trim().toLowerCase());
-    if (exactMatch) {
-      return exactMatch;
-    }
-
-    const normalizedHint = configuredHint.trim().toLowerCase().replace(/[^a-z0-9]+/gu, '');
-    const fuzzyMatch = models.find((item) => item.toLowerCase().replace(/[^a-z0-9]+/gu, '').includes(normalizedHint));
-    if (fuzzyMatch) {
-      return fuzzyMatch;
-    }
+  const resolvedConfigured = resolveConfiguredModelMatch(models, configuredCandidates);
+  if (resolvedConfigured) {
+    return resolvedConfigured;
   }
 
   if (models.length === 1) {
@@ -172,31 +189,101 @@ const callControlPlane = async (config: RuntimeConfig, endpoint: string, payload
   return body;
 };
 
+const buildSuperAgentStatusPayload = (
+  config: RuntimeConfig,
+  statuses: {
+    lmstudio: Awaited<ReturnType<typeof checkLmStudio>>;
+    controlplane: Awaited<ReturnType<typeof checkControlPlane>>;
+    n8n: Awaited<ReturnType<typeof checkN8n>>;
+    n8nAccess: Awaited<ReturnType<typeof getN8nAccessStatus>>;
+    openjarvis: Awaited<ReturnType<typeof checkOpenJarvis>>;
+    openclaw: Awaited<ReturnType<typeof checkOpenClaw>>;
+    hermes: Awaited<ReturnType<typeof checkHermes>>;
+    nemoclaw: Awaited<ReturnType<typeof checkNemoClaw>>;
+  },
+) => {
+  const warnings = Object.entries({
+    lmstudio: statuses.lmstudio,
+    controlplane: statuses.controlplane,
+    n8n: statuses.n8n,
+    openjarvis: statuses.openjarvis,
+    openclaw: statuses.openclaw,
+    hermes: statuses.hermes,
+    nemoclaw: statuses.nemoclaw,
+  })
+    .filter(([, status]) => !status.ok)
+    .map(([name, status]) => `${name}: ${status.detail}`);
+
+  return {
+    identity: {
+      product: 'Super Agent',
+      frontDoor: 'LM Studio Chat',
+      mcpServer: 'super-agent',
+      selectedLmStudioModelRole: 'reasoning-shell',
+      modelAgnosticExperience: true,
+      lmStudioMcpConfigPath: resolveLmStudioMcpConfigPath(),
+    },
+    contract: {
+      actAs: 'Super Agent',
+      hideInternalLaneNamesByDefault: true,
+      mentionInternalLanesOnlyWhenDiagnosing: true,
+      defaultBehavior: 'Treat the currently selected LM Studio chat model as the reasoning shell and the MCP tool surface as the real product capability layer.',
+    },
+    capabilities: {
+      reasoning: ['super_agent_reason', 'super_agent_delegate'],
+      automation: ['super_agent_fetch', 'super_agent_notes', 'super_agent_tool_generate', 'super_agent_workflow_design'],
+      visibility: ['super_agent_status', 'super_agent_automation_status', 'super_agent_workflows', 'super_agent_workflow_runs'],
+      runtime: ['super_agent_runtime_status', 'super_agent_sandbox_status'],
+    },
+    recommendedFirstMove: 'Call super_agent_status at session start or whenever runtime readiness is unclear.',
+    warnings,
+    services: {
+      lmstudio: statuses.lmstudio,
+      controlplane: statuses.controlplane,
+      n8n: statuses.n8n,
+      n8nAccess: statuses.n8nAccess,
+      openjarvis: statuses.openjarvis,
+      openclaw: statuses.openclaw,
+      hermes: statuses.hermes,
+      nemoclaw: statuses.nemoclaw,
+    },
+    packageDefaults: {
+      lmStudioCandidates: config.lmStudioModelCandidates,
+      openJarvisCandidates: config.openJarvisModelCandidates,
+      openClawCandidates: config.openClawModelCandidates,
+      hermesCandidates: config.hermesModelCandidates,
+      nemoClawCandidates: config.nemoClawModelCandidates,
+    },
+  };
+};
+
 const buildServer = async (rootDir: string): Promise<McpServer> => {
   const config = await loadRuntimeConfig(rootDir);
   const server = new McpServer(
     {
-      name: 'local-super-agent-kit',
+      name: 'super-agent',
       version: '0.1.0',
     },
     {
       instructions: [
-        'LM Studio Chat is the human-facing front door for this local package.',
-        'Use stack_status to inspect the local runtime before routing work.',
-        'Use openjarvis_chat when you need the packaged OpenJarvis runtime inside the local chain.',
-        'Use openclaw_chat only after the packaged OpenClaw gateway and its chat surface are both ready.',
-        'Use n8n_status, n8n_workflows, and n8n_executions when LM Studio Chat needs visibility into the hidden workflow engine.',
-        'Use hermes_status to inspect the packaged Hermes runtime when you need agent-side diagnostics.',
-        'Use web_fetch, notes_capture, and tool_generate for deterministic local automation through the control plane.',
-        'NemoClaw is the sandboxed packaged tail of the local chain, not the primary chat surface.',
+        'When this MCP server is active, present the experience as Super Agent.',
+        'LM Studio Chat is the human-facing front door, but the currently selected chat model is only the reasoning shell.',
+        'Do not frame the experience as the raw base model unless the user explicitly asks about model identity.',
+        'Use super_agent_status early when runtime readiness is unclear.',
+        'Prefer Super Agent tool names in your planning and replies.',
+        'Keep OpenJarvis, OpenClaw, Hermes, and NemoClaw internal unless you are diagnosing a runtime issue or the user asks for lane-level details.',
+        'Use super_agent_reason and super_agent_delegate for internal reasoning or delegation through packaged runtimes.',
+        'Use super_agent_fetch, super_agent_notes, super_agent_tool_generate, and super_agent_workflow_design for deterministic automation through the control plane.',
+        'Use super_agent_automation_status, super_agent_workflows, and super_agent_workflow_runs when you need visibility into the hidden workflow engine.',
+        'Treat Super Agent as one unified local product regardless of which LM Studio chat model is currently selected.',
       ].join(' '),
     },
   );
 
   server.registerTool(
-    'stack_status',
+    'super_agent_status',
     {
-      description: 'Inspect LM Studio, control-plane, n8n, OpenJarvis, OpenClaw, Hermes, and NemoClaw status behind LM Studio Chat.',
+      description: 'Inspect the unified Super Agent runtime behind LM Studio Chat and return the current product contract, capabilities, and subsystem readiness.',
     },
     async () => {
       try {
@@ -210,7 +297,7 @@ const buildServer = async (rootDir: string): Promise<McpServer> => {
           checkHermes(config),
           checkNemoClaw(config),
         ]);
-        return asToolResult({
+        return asToolResult(buildSuperAgentStatusPayload(config, {
           lmstudio,
           controlplane,
           n8n,
@@ -219,9 +306,7 @@ const buildServer = async (rootDir: string): Promise<McpServer> => {
           openclaw,
           hermes,
           nemoclaw,
-          lmStudioMcpConfigPath: resolveLmStudioMcpConfigPath(),
-          lmStudioChatFrontDoor: true,
-        });
+        }));
       } catch (error) {
         return asToolResult(error instanceof Error ? error.message : String(error), true);
       }
@@ -229,9 +314,9 @@ const buildServer = async (rootDir: string): Promise<McpServer> => {
   );
 
   server.registerTool(
-    'n8n_status',
+    'super_agent_automation_status',
     {
-      description: 'Ensure hidden n8n automation access is ready and report whether LM Studio Chat can inspect workflows without exposing n8n auth details.',
+      description: 'Report whether the Super Agent automation plane can inspect and manage hidden n8n workflows without exposing auth details to the user.',
     },
     async () => {
       try {
@@ -243,9 +328,9 @@ const buildServer = async (rootDir: string): Promise<McpServer> => {
   );
 
   server.registerTool(
-    'n8n_workflows',
+    'super_agent_workflows',
     {
-      description: 'List recent n8n workflows through the control plane so LM Studio Chat can inspect the hidden workflow surface.',
+      description: 'List recent Super Agent automation workflows through the control plane.',
       inputSchema: z.object({
         limit: z.number().int().min(1).max(100).optional().describe('Maximum number of workflows to return'),
         activeOnly: z.boolean().optional().describe('Return only active workflows'),
@@ -261,9 +346,9 @@ const buildServer = async (rootDir: string): Promise<McpServer> => {
   );
 
   server.registerTool(
-    'n8n_executions',
+    'super_agent_workflow_runs',
     {
-      description: 'List recent n8n executions through the control plane while keeping the workflow engine hidden behind LM Studio Chat.',
+      description: 'List recent Super Agent workflow runs through the control plane while keeping the internal workflow engine hidden.',
       inputSchema: z.object({
         limit: z.number().int().min(1).max(100).optional().describe('Maximum number of executions to return'),
         status: z.string().optional().describe('Optional execution status filter, such as success or error'),
@@ -279,12 +364,12 @@ const buildServer = async (rootDir: string): Promise<McpServer> => {
   );
 
   server.registerTool(
-    'openjarvis_chat',
+    'super_agent_reason',
     {
-      description: 'Route a prompt through the packaged OpenJarvis runtime while keeping LM Studio Chat as the final user endpoint.',
+      description: 'Run an internal Super Agent reasoning pass through the packaged reasoning lane while keeping the final user experience unified.',
       inputSchema: z.object({
-        prompt: z.string().min(1).describe('User prompt to delegate to OpenJarvis'),
-        model: z.string().optional().describe('Optional explicit OpenJarvis model override'),
+        prompt: z.string().min(1).describe('Goal or prompt to send through the packaged reasoning lane'),
+        model: z.string().optional().describe('Optional explicit reasoning-lane model override'),
         systemPrompt: z.string().optional().describe('Optional system prompt for OpenAI-compatible chat mode'),
         temperature: z.number().min(0).max(2).optional().describe('Optional temperature override'),
       }),
@@ -299,7 +384,12 @@ const buildServer = async (rootDir: string): Promise<McpServer> => {
           config.openJarvisBaseUrl,
           config.openJarvisApiKey,
           model,
-          config.openJarvisModelHint,
+          collectModelCandidates(
+            config.openJarvisModelHint,
+            config.openJarvisModelCandidates,
+            config.lmStudioModelHint,
+            config.lmStudioModelCandidates,
+          ),
         );
 
         return asToolResult(await callOpenAICompatibleChat(
@@ -317,12 +407,12 @@ const buildServer = async (rootDir: string): Promise<McpServer> => {
   );
 
   server.registerTool(
-    'openclaw_chat',
+    'super_agent_delegate',
     {
-      description: 'Route a prompt through the packaged OpenClaw gateway behind LM Studio Chat once the gateway chat surface and OpenClaw agent auth are ready.',
+      description: 'Delegate a prompt through the packaged Super Agent gateway lane when the deeper agent surface is ready.',
       inputSchema: z.object({
-        prompt: z.string().min(1).describe('User prompt to delegate to OpenClaw'),
-        model: z.string().optional().describe('Optional explicit OpenClaw model override'),
+        prompt: z.string().min(1).describe('Goal or prompt to delegate through the packaged gateway lane'),
+        model: z.string().optional().describe('Optional explicit delegated-lane model override'),
         systemPrompt: z.string().optional().describe('Optional system prompt'),
         temperature: z.number().min(0).max(2).optional().describe('Optional temperature override'),
       }),
@@ -337,7 +427,12 @@ const buildServer = async (rootDir: string): Promise<McpServer> => {
           config.openClawBaseUrl,
           config.openClawApiKey,
           model,
-          config.openClawModel,
+          collectModelCandidates(
+            config.openClawModel,
+            config.openClawModelCandidates,
+            config.lmStudioModelHint,
+            config.lmStudioModelCandidates,
+          ),
         );
 
         return asToolResult(await callOpenAICompatibleChat(
@@ -355,9 +450,9 @@ const buildServer = async (rootDir: string): Promise<McpServer> => {
   );
 
   server.registerTool(
-    'hermes_status',
+    'super_agent_runtime_status',
     {
-      description: 'Inspect the packaged Hermes runtime that ships with the super-agent path.',
+      description: 'Inspect the packaged Super Agent runtime lane used for repo-local runtime diagnostics.',
     },
     async () => {
       try {
@@ -366,6 +461,7 @@ const buildServer = async (rootDir: string): Promise<McpServer> => {
           status,
           command: config.hermesCommand,
           modelHint: config.hermesModelHint,
+          modelCandidates: config.hermesModelCandidates,
         });
       } catch (error) {
         return asToolResult(error instanceof Error ? error.message : String(error), true);
@@ -374,9 +470,9 @@ const buildServer = async (rootDir: string): Promise<McpServer> => {
   );
 
   server.registerTool(
-    'nemoclaw_status',
+    'super_agent_sandbox_status',
     {
-      description: 'Inspect the packaged NemoClaw sandbox/runtime tail that sits behind LM Studio Chat in this design.',
+      description: 'Inspect the packaged Super Agent sandbox/runtime tail that sits behind LM Studio Chat.',
     },
     async () => {
       try {
@@ -385,6 +481,7 @@ const buildServer = async (rootDir: string): Promise<McpServer> => {
           status,
           provider: config.nemoClawProvider,
           model: config.nemoClawModel,
+          modelCandidates: config.nemoClawModelCandidates,
           sandboxName: config.nemoClawSandboxName,
         });
       } catch (error) {
@@ -394,9 +491,9 @@ const buildServer = async (rootDir: string): Promise<McpServer> => {
   );
 
   server.registerTool(
-    'web_fetch',
+    'super_agent_fetch',
     {
-      description: 'Fetch a URL through the local control plane so LM Studio Chat can use deterministic web fetches.',
+      description: 'Fetch a URL through the Super Agent control plane so the chat experience can use deterministic web access.',
       inputSchema: z.object({
         url: z.string().url().describe('Absolute http or https URL to fetch'),
       }),
@@ -411,9 +508,9 @@ const buildServer = async (rootDir: string): Promise<McpServer> => {
   );
 
   server.registerTool(
-    'notes_capture',
+    'super_agent_notes',
     {
-      description: 'Capture a durable note through the local control plane from LM Studio Chat.',
+      description: 'Capture a durable note through the Super Agent control plane from LM Studio Chat.',
       inputSchema: z.object({
         title: z.string().min(1).describe('Note title'),
         content: z.string().min(1).describe('Markdown note content'),
@@ -429,9 +526,9 @@ const buildServer = async (rootDir: string): Promise<McpServer> => {
   );
 
   server.registerTool(
-    'tool_generate',
+    'super_agent_tool_generate',
     {
-      description: 'Generate and validate a new local automation tool through the control plane from LM Studio Chat.',
+      description: 'Generate and validate a new local Super Agent automation tool through the control plane.',
       inputSchema: z.object({
         goal: z.string().min(1).describe('Desired automation capability'),
         name: z.string().optional().describe('Optional tool name override'),
@@ -442,6 +539,39 @@ const buildServer = async (rootDir: string): Promise<McpServer> => {
     async ({ goal, name, summary, webhookPath }) => {
       try {
         return asToolResult(await callControlPlane(config, '/api/tool.generate', { goal, name, summary, webhookPath }));
+      } catch (error) {
+        return asToolResult(error instanceof Error ? error.message : String(error), true);
+      }
+    },
+  );
+
+  server.registerTool(
+    'super_agent_workflow_design',
+    {
+      description: 'Design a richer Super Agent automation workflow draft and optionally scaffold its local review artifacts.',
+      inputSchema: z.object({
+        goal: z.string().min(1).describe('Desired automation or workflow outcome'),
+        name: z.string().optional().describe('Optional workflow or tool name override'),
+        summary: z.string().optional().describe('Optional workflow summary override'),
+        webhookPath: z.string().optional().describe('Optional webhook path override'),
+        constraints: z.array(z.string().min(1)).optional().describe('Optional hard constraints for the workflow draft'),
+        integrateWithTools: z.array(z.string().min(1)).optional().describe('Optional existing tool names to reference in the draft'),
+        autoGenerateTool: z.boolean().optional().describe('When true, also scaffold the generated tool surface and workflow JSON'),
+        promoteToN8n: z.boolean().optional().describe('When true, import the scaffolded workflow into n8n as an inactive review surface'),
+      }),
+    },
+    async ({ goal, name, summary, webhookPath, constraints, integrateWithTools, autoGenerateTool, promoteToN8n }) => {
+      try {
+        return asToolResult(await callControlPlane(config, '/api/n8n.workflow.design', {
+          goal,
+          name,
+          summary,
+          webhookPath,
+          constraints,
+          integrateWithTools,
+          autoGenerateTool,
+          promoteToN8n,
+        }));
       } catch (error) {
         return asToolResult(error instanceof Error ? error.message : String(error), true);
       }

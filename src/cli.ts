@@ -102,6 +102,7 @@ const main = async (): Promise<void> => {
     }
 
     case 'start-control-plane': {
+      await runInstallLmStudioMcp(rootDir);
       const status = await runStartControlPlane(rootDir);
       console.log(`control-plane: ${status.detail}`);
       if (!status.ok) {
@@ -162,6 +163,7 @@ const main = async (): Promise<void> => {
     }
 
     case 'doctor': {
+      await runInstallLmStudioMcp(rootDir);
       const config = await loadRuntimeConfig(rootDir);
       const report = await runDoctor(config);
       console.log(formatDoctorReport(report));

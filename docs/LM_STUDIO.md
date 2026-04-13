@@ -51,22 +51,25 @@ LM Studio Chat should be treated as the operator-facing front door for this star
 
 ## LM Studio MCP Bridge
 
-This repo now ships a local MCP server so LM Studio Chat can reach the control plane and packaged runtime chain without introducing another primary console.
+This repo now ships a local MCP server branded as `super-agent` so LM Studio Chat can reach the control plane and packaged runtime chain without introducing another primary console.
 
-- run `npm run install:lmstudio-mcp` to write the repo entry into `~/.lmstudio/mcp.json`
+- run `npm run install:lmstudio-mcp` to write the `super-agent` entry into `~/.lmstudio/mcp.json`
 - bootstrap now installs that entry automatically for the teammate path
 - if LM Studio was already open, restart it so the new MCP server entry is picked up
 
+When the MCP bridge is active, the intended experience is that the user is talking to Super Agent, not to whichever base model is currently selected in LM Studio Chat. The selected model is the reasoning shell; the MCP tool surface is the product capability layer.
+
 The MCP surface currently exposes:
 
-- `stack_status`
-- `n8n_status`
-- `n8n_workflows`
-- `n8n_executions`
-- `openjarvis_chat`
-- `openclaw_chat`
-- `hermes_status`
-- `nemoclaw_status`
-- `web_fetch`
-- `notes_capture`
-- `tool_generate`
+- `super_agent_status`
+- `super_agent_automation_status`
+- `super_agent_workflows`
+- `super_agent_workflow_runs`
+- `super_agent_reason`
+- `super_agent_delegate`
+- `super_agent_runtime_status`
+- `super_agent_sandbox_status`
+- `super_agent_fetch`
+- `super_agent_notes`
+- `super_agent_tool_generate`
+- `super_agent_workflow_design`

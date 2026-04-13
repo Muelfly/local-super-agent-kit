@@ -1,9 +1,9 @@
 import { existsSync } from 'node:fs';
-import { chmod, mkdir, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { RuntimeConfig } from './env.js';
 import { commandExists, launchDetachedShell, runCommand, runShellCommand } from './shell.js';
-import type { ServiceStatus } from './lmStudio.js';
+import { resolveConfiguredModelMatch, type ServiceStatus } from './lmStudio.js';
 import { ensureN8nAutomationAccess, getN8nAccessStatus, waitForN8nReachable } from './n8n.js';
 
 const buildModelsUrl = (baseUrl: string): string => `${baseUrl.replace(/\/$/u, '')}/models`;
@@ -20,10 +20,27 @@ type OpenClawModelsStatus = {
   };
 };
 
-type OpenClawModelResolution = {
+type LaneModelResolution = {
   ok: boolean;
   detail: string;
   modelId?: string;
+};
+
+type HermesBinding = {
+  defaultModel: string;
+  provider: string;
+  baseUrl: string;
+};
+
+type NemoClawSandboxEntry = {
+  name?: string;
+  provider?: string | null;
+  model?: string | null;
+};
+
+type NemoClawRegistry = {
+  sandboxes?: Record<string, NemoClawSandboxEntry>;
+  defaultSandbox?: string | null;
 };
 
 const waitForService = async (check: () => Promise<ServiceStatus>, attempts = 20, delayMs = 500): Promise<ServiceStatus> => {
@@ -48,9 +65,74 @@ const buildOpenClawEnvironment = (config: RuntimeConfig): Record<string, string>
   OPENCLAW_CONFIG_PATH: config.openClawConfigPath,
 });
 
+const quotePosixArg = (value: string): string => `'${value.replace(/'/gu, `'\\''`)}'`;
+
 const normalizeModelToken = (value: string): string => value.toLowerCase().replace(/[^a-z0-9]+/gu, '');
 
 const isLikelyEmbeddingModel = (modelId: string): boolean => /embed|embedding/u.test(modelId.toLowerCase());
+
+const normalizeBaseUrl = (value: string): string => value.trim().replace(/\/+$/u, '');
+
+const collectModelCandidates = (...groups: Array<string | string[] | undefined>): string[] => {
+  const seen = new Set<string>();
+  const merged: string[] = [];
+
+  for (const group of groups) {
+    const values = Array.isArray(group) ? group : [group];
+    for (const value of values) {
+      const trimmed = typeof value === 'string' ? value.trim() : '';
+      if (!trimmed) {
+        continue;
+      }
+
+      const key = normalizeModelToken(trimmed);
+      if (!key || seen.has(key)) {
+        continue;
+      }
+
+      seen.add(key);
+      merged.push(trimmed);
+    }
+  }
+
+  return merged;
+};
+
+const resolveOpenJarvisModelCandidates = (config: RuntimeConfig): string[] => {
+  return collectModelCandidates(
+    config.openJarvisModelHint,
+    config.openJarvisModelCandidates,
+    config.lmStudioModelHint,
+    config.lmStudioModelCandidates,
+  );
+};
+
+const resolveOpenClawModelCandidates = (config: RuntimeConfig): string[] => {
+  return collectModelCandidates(
+    config.openClawModel,
+    config.openClawModelCandidates,
+    config.lmStudioModelHint,
+    config.lmStudioModelCandidates,
+  );
+};
+
+const resolveHermesModelCandidates = (config: RuntimeConfig): string[] => {
+  return collectModelCandidates(
+    config.hermesModelHint,
+    config.hermesModelCandidates,
+    config.lmStudioModelHint,
+    config.lmStudioModelCandidates,
+  );
+};
+
+const resolveNemoClawModelCandidates = (config: RuntimeConfig): string[] => {
+  return collectModelCandidates(
+    config.nemoClawModel,
+    config.nemoClawModelCandidates,
+    config.lmStudioModelHint,
+    config.lmStudioModelCandidates,
+  );
+};
 
 const parseGatewayPort = (baseUrl: string, fallback = 18789): number => {
   try {
@@ -74,7 +156,11 @@ const listLmStudioModels = async (config: RuntimeConfig): Promise<string[]> => {
     : [];
 };
 
-const resolveOpenClawModelFromLmStudio = async (config: RuntimeConfig): Promise<OpenClawModelResolution> => {
+const resolveLaneModelFromLmStudio = async (
+  config: RuntimeConfig,
+  laneLabel: string,
+  configuredCandidates: string[],
+): Promise<LaneModelResolution> => {
   let models: string[] = [];
 
   try {
@@ -89,7 +175,7 @@ const resolveOpenClawModelFromLmStudio = async (config: RuntimeConfig): Promise<
   if (models.length === 0) {
     return {
       ok: false,
-      detail: 'LM Studio is reachable, but no model is loaded. Load a chat model before starting the packaged OpenClaw lane.',
+      detail: `LM Studio is reachable, but no model is loaded. Load a chat model before starting the packaged ${laneLabel} lane.`,
     };
   }
 
@@ -101,40 +187,352 @@ const resolveOpenClawModelFromLmStudio = async (config: RuntimeConfig): Promise<
     };
   }
 
-  const configuredCandidates = [config.openClawModel, config.lmStudioModelHint, ...config.lmStudioModelCandidates]
-    .map((value) => value.trim())
-    .filter(Boolean);
-  const uniqueCandidates = [...new Set(configuredCandidates)];
-
-  for (const candidate of uniqueCandidates) {
-    const exactMatch = chatModels.find((model) => model.toLowerCase() === candidate.toLowerCase());
-    if (exactMatch) {
-      return { ok: true, detail: `matched configured LM Studio model ${candidate}`, modelId: exactMatch };
-    }
-
-    const normalizedCandidate = normalizeModelToken(candidate);
-    if (!normalizedCandidate) {
-      continue;
-    }
-
-    const fuzzyMatch = chatModels.find((model) => normalizeModelToken(model).includes(normalizedCandidate));
-    if (fuzzyMatch) {
-      return { ok: true, detail: `matched configured LM Studio hint ${candidate}`, modelId: fuzzyMatch };
-    }
-  }
-
-  if (chatModels.length === 1) {
+  const resolvedModel = resolveConfiguredModelMatch(chatModels, configuredCandidates);
+  if (resolvedModel) {
     return {
       ok: true,
-      detail: `using the only loaded LM Studio chat model ${chatModels[0]}`,
-      modelId: chatModels[0],
+      detail: `matched configured LM Studio candidate set for ${laneLabel}`,
+      modelId: resolvedModel,
     };
   }
 
   return {
     ok: false,
-    detail: `Loaded LM Studio chat models did not match the packaged OpenClaw target. Loaded: ${chatModels.join(', ')}. Candidates: ${uniqueCandidates.join(', ') || 'none'}`,
+    detail: `Loaded LM Studio chat models did not match the packaged ${laneLabel} candidate set. Loaded: ${chatModels.join(', ')}. Candidates: ${configuredCandidates.join(', ') || 'none'}`,
   };
+};
+
+const resolveOpenClawModelFromLmStudio = async (config: RuntimeConfig): Promise<LaneModelResolution> => {
+  return resolveLaneModelFromLmStudio(config, 'OpenClaw', resolveOpenClawModelCandidates(config));
+};
+
+const resolveHermesModelFromLmStudio = async (config: RuntimeConfig): Promise<LaneModelResolution> => {
+  return resolveLaneModelFromLmStudio(config, 'Hermes', resolveHermesModelCandidates(config));
+};
+
+const resolveNemoClawModelFromLmStudio = async (config: RuntimeConfig): Promise<LaneModelResolution> => {
+  return resolveLaneModelFromLmStudio(config, 'NemoClaw', resolveNemoClawModelCandidates(config));
+};
+
+const toWslPath = (windowsPath: string): string => {
+  const normalized = path.resolve(windowsPath).replace(/\\/gu, '/');
+  const driveMatch = normalized.match(/^([A-Za-z]):\/(.*)$/u);
+  if (!driveMatch) {
+    return normalized;
+  }
+
+  const [, drive, remainder] = driveMatch;
+  return `/mnt/${drive.toLowerCase()}/${remainder}`;
+};
+
+const resolveHermesLinuxCommand = async (config: RuntimeConfig): Promise<string | null> => {
+  if (process.platform !== 'win32') {
+    return null;
+  }
+
+  const wslHome = await resolveWslHome(config.rootDir);
+  if (!wslHome) {
+    return null;
+  }
+
+  return `${wslHome}/.hermes/hermes-agent/venv/bin/hermes`;
+};
+
+const runHermesCommand = async (config: RuntimeConfig, args: string[]) => {
+  if (process.platform !== 'win32') {
+    return runCommand(config.hermesCommand, args, config.rootDir, {
+      HERMES_HOME: config.hermesHomeDir,
+    });
+  }
+
+  const linuxCommand = await resolveHermesLinuxCommand(config);
+  if (!linuxCommand) {
+    return {
+      code: 1,
+      stdout: '',
+      stderr: 'could not resolve the Hermes Linux command path in WSL',
+    };
+  }
+
+  const script = `HERMES_HOME=${quotePosixArg(toWslPath(config.hermesHomeDir))} ${quotePosixArg(linuxCommand)} ${args.map(quotePosixArg).join(' ')}`;
+  return runCommand('wsl.exe', ['--', 'bash', '-lc', script], config.rootDir);
+};
+
+const parseHermesBinding = (content: string): HermesBinding | null => {
+  let inModelBlock = false;
+  let defaultModel = '';
+  let provider = '';
+  let baseUrl = '';
+
+  for (const rawLine of content.split(/\r?\n/u)) {
+    const line = rawLine.replace(/\r$/u, '');
+    if (/^model:\s*$/u.test(line)) {
+      inModelBlock = true;
+      continue;
+    }
+
+    if (!inModelBlock) {
+      continue;
+    }
+
+    if (/^[^\s].*:\s*$/u.test(line)) {
+      break;
+    }
+
+    const match = line.match(/^\s{2}([a-z_]+):\s*(.+)\s*$/u);
+    if (!match) {
+      continue;
+    }
+
+    const [, key, value] = match;
+    const cleanedValue = value.trim().replace(/^['"]|['"]$/gu, '');
+    if (key === 'default') {
+      defaultModel = cleanedValue;
+    } else if (key === 'provider') {
+      provider = cleanedValue;
+    } else if (key === 'base_url') {
+      baseUrl = cleanedValue;
+    }
+  }
+
+  if (!defaultModel && !provider && !baseUrl) {
+    return null;
+  }
+
+  return {
+    defaultModel,
+    provider,
+    baseUrl,
+  };
+};
+
+const readHermesBinding = async (config: RuntimeConfig): Promise<{ ok: boolean; detail: string; binding?: HermesBinding }> => {
+  const configPath = path.join(config.hermesHomeDir, 'config.yaml');
+  if (!existsSync(configPath)) {
+    return {
+      ok: false,
+      detail: `repo-local Hermes config is missing at ${configPath}`,
+    };
+  }
+
+  try {
+    const content = await readFile(configPath, 'utf8');
+    const binding = parseHermesBinding(content);
+    if (!binding) {
+      return {
+        ok: false,
+        detail: `repo-local Hermes config at ${configPath} does not contain a readable model block`,
+      };
+    }
+    return {
+      ok: true,
+      detail: 'ok',
+      binding,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      detail: error instanceof Error ? error.message : 'could not read repo-local Hermes config',
+    };
+  }
+};
+
+const validateHermesLmStudioBinding = async (config: RuntimeConfig, expectedModelId: string): Promise<ServiceStatus> => {
+  const result = await readHermesBinding(config);
+  if (!result.ok || !result.binding) {
+    return { ok: false, detail: result.detail };
+  }
+
+  const { binding } = result;
+  if (binding.provider !== 'custom') {
+    return {
+      ok: false,
+      detail: `repo-local Hermes provider mismatch: expected custom, got ${binding.provider || 'unset'}`,
+    };
+  }
+
+  if (normalizeBaseUrl(binding.baseUrl) !== normalizeBaseUrl(config.lmStudioBaseUrl)) {
+    return {
+      ok: false,
+      detail: `repo-local Hermes base_url mismatch: expected ${config.lmStudioBaseUrl}, got ${binding.baseUrl || 'unset'}`,
+    };
+  }
+
+  if (binding.defaultModel !== expectedModelId) {
+    return {
+      ok: false,
+      detail: `repo-local Hermes model mismatch: expected ${expectedModelId}, got ${binding.defaultModel || 'unset'}`,
+    };
+  }
+
+  return {
+    ok: true,
+    detail: `repo-local LM Studio binding ready: ${binding.defaultModel}`,
+  };
+};
+
+const ensureHermesLmStudioBinding = async (config: RuntimeConfig): Promise<ServiceStatus> => {
+  const resolution = await resolveHermesModelFromLmStudio(config);
+  if (!resolution.ok || !resolution.modelId) {
+    return { ok: false, detail: resolution.detail };
+  }
+
+  await mkdir(config.hermesHomeDir, { recursive: true });
+  for (const [key, value] of [
+    ['model.default', resolution.modelId],
+    ['model.provider', 'custom'],
+    ['model.base_url', config.lmStudioBaseUrl],
+  ] as Array<[string, string]>) {
+    const result = await runHermesCommand(config, ['config', 'set', key, value]);
+    if (result.code !== 0) {
+      return {
+        ok: false,
+        detail: result.stderr || result.stdout || `Hermes config set failed for ${key}`,
+      };
+    }
+  }
+
+  return validateHermesLmStudioBinding(config, resolution.modelId);
+};
+
+const readNemoClawRegistry = async (config: RuntimeConfig): Promise<{ ok: boolean; detail: string; registry?: NemoClawRegistry }> => {
+  if (process.platform === 'win32') {
+    const result = await runCommand(
+      'wsl.exe',
+      ['--', 'bash', '-lc', 'if [ -f ~/.nemoclaw/sandboxes.json ]; then cat ~/.nemoclaw/sandboxes.json; else printf \'{"sandboxes":{},"defaultSandbox":null}\'; fi'],
+      config.rootDir,
+    );
+    if (result.code !== 0) {
+      return {
+        ok: false,
+        detail: result.stderr || result.stdout || 'could not read NemoClaw registry from WSL',
+      };
+    }
+
+    try {
+      return {
+        ok: true,
+        detail: 'ok',
+        registry: JSON.parse(result.stdout) as NemoClawRegistry,
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        detail: error instanceof Error ? error.message : 'could not parse NemoClaw registry',
+      };
+    }
+  }
+
+  const registryPath = path.join(process.env.HOME || '', '.nemoclaw', 'sandboxes.json');
+  if (!existsSync(registryPath)) {
+    return {
+      ok: true,
+      detail: 'ok',
+      registry: { sandboxes: {}, defaultSandbox: null },
+    };
+  }
+
+  try {
+    return {
+      ok: true,
+      detail: 'ok',
+      registry: JSON.parse(await readFile(registryPath, 'utf8')) as NemoClawRegistry,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      detail: error instanceof Error ? error.message : 'could not parse NemoClaw registry',
+    };
+  }
+};
+
+const validateNemoClawBinding = async (config: RuntimeConfig, expectedModelId: string): Promise<ServiceStatus> => {
+  const registryResult = await readNemoClawRegistry(config);
+  if (!registryResult.ok || !registryResult.registry) {
+    return { ok: false, detail: registryResult.detail };
+  }
+
+  const sandboxes = registryResult.registry.sandboxes ?? {};
+  const sandboxNames = Object.keys(sandboxes);
+  if (sandboxNames.length === 0) {
+    return {
+      ok: false,
+      detail: 'no NemoClaw sandboxes are registered yet',
+    };
+  }
+
+  const activeName = registryResult.registry.defaultSandbox && sandboxes[registryResult.registry.defaultSandbox]
+    ? registryResult.registry.defaultSandbox
+    : sandboxNames[0];
+  const entry = sandboxes[activeName];
+  const provider = entry?.provider?.trim() || '';
+  const model = entry?.model?.trim() || '';
+
+  if (config.nemoClawProvider.trim() && provider !== config.nemoClawProvider.trim()) {
+    return {
+      ok: false,
+      detail: `NemoClaw provider mismatch: expected ${config.nemoClawProvider}, got ${provider || 'unset'}`,
+    };
+  }
+
+  if (!model) {
+    return {
+      ok: false,
+      detail: `NemoClaw sandbox ${activeName} does not report a model yet`,
+    };
+  }
+
+  if (model !== expectedModelId && normalizeModelToken(model) !== normalizeModelToken(expectedModelId)) {
+    return {
+      ok: false,
+      detail: `NemoClaw model mismatch: expected ${expectedModelId}, got ${model}`,
+    };
+  }
+
+  return {
+    ok: true,
+    detail: `default sandbox ${activeName}; provider: ${provider || 'unset'}; model: ${model}`,
+  };
+};
+
+const writeManagedNemoClawSetupScript = async (config: RuntimeConfig, modelId: string): Promise<string> => {
+  const scriptPath = path.join(config.rootDir, '.runtime', 'nemoclaw', 'setup.sh');
+  const exportLines = [
+    `export NON_INTERACTIVE=${quotePosixArg('1')}`,
+    `export ACCEPT_THIRD_PARTY_SOFTWARE=${quotePosixArg('1')}`,
+    `export NEMOCLAW_PROVIDER=${quotePosixArg(config.nemoClawProvider)}`,
+    `export NEMOCLAW_MODEL=${quotePosixArg(modelId)}`,
+    `export NEMOCLAW_SANDBOX_NAME=${quotePosixArg(config.nemoClawSandboxName)}`,
+  ];
+
+  if (config.nemoClawProvider.trim().toLowerCase() === 'custom') {
+    exportLines.push(`export NEMOCLAW_ENDPOINT_URL=${quotePosixArg(config.nemoClawEndpointUrl)}`);
+    exportLines.push(`export COMPATIBLE_API_KEY=${quotePosixArg(config.nemoClawCompatibleApiKey)}`);
+  }
+
+  const content = [
+    '#!/usr/bin/env bash',
+    'set -e',
+    ...exportLines,
+    'tmpfile=$(mktemp)',
+    "trap 'rm -f \"$tmpfile\"' EXIT",
+    'curl -fsSL https://www.nvidia.com/nemoclaw.sh -o "$tmpfile"',
+    'bash "$tmpfile"',
+  ].join('\n');
+
+  await mkdir(path.dirname(scriptPath), { recursive: true });
+  await writeFile(scriptPath, content, 'utf8');
+  return process.platform === 'win32' ? toWslPath(scriptPath) : scriptPath;
+};
+
+const runManagedNemoClawSetup = async (config: RuntimeConfig, modelId: string) => {
+  const scriptPath = await writeManagedNemoClawSetupScript(config, modelId);
+
+  if (process.platform === 'win32') {
+    return runCommand('wsl.exe', ['--', 'bash', scriptPath], config.rootDir);
+  }
+
+  return runCommand('bash', [scriptPath], config.rootDir);
 };
 
 const readOpenClawModelsStatus = async (config: RuntimeConfig): Promise<{ ok: boolean; detail: string; status?: OpenClawModelsStatus }> => {
@@ -464,9 +862,17 @@ export const checkOpenJarvis = async (config: RuntimeConfig): Promise<ServiceSta
     const models = Array.isArray(payload.data)
       ? payload.data.map((item) => String(item.id ?? '').trim()).filter(Boolean)
       : [];
+    const configuredCandidates = resolveOpenJarvisModelCandidates(config);
+    const matchedModel = resolveConfiguredModelMatch(models, configuredCandidates);
+    if (!matchedModel) {
+      return {
+        ok: false,
+        detail: `OpenJarvis models did not match the packaged target. Loaded: ${models.join(', ') || 'none'}. Candidates: ${configuredCandidates.join(', ') || 'none'}`,
+      };
+    }
     const evalHook = config.openJarvisEvalCommand ? 'eval hook configured' : 'eval hook not configured';
     const modelDetail = models.length > 0 ? `models: ${models.join(', ')}` : 'no models listed';
-    return { ok: true, detail: `${modelDetail}; ${evalHook}` };
+    return { ok: true, detail: `${modelDetail}; matched packaged target: ${matchedModel}; ${evalHook}` };
   } catch (error) {
     const runtimeDetail = await readOpenJarvisRuntimeDetail(config);
     const detail = error instanceof Error ? error.message : 'OpenJarvis unreachable';
@@ -613,22 +1019,17 @@ export const checkHermes = async (config: RuntimeConfig): Promise<ServiceStatus>
     };
   }
 
-  if (config.hermesStatusArgs.length === 0) {
-    return { ok: true, detail: `command available; model hint: ${config.hermesModelHint || 'not set'}` };
+  const resolution = await resolveHermesModelFromLmStudio(config);
+  if (!resolution.ok || !resolution.modelId) {
+    return { ok: false, detail: resolution.detail };
   }
 
-  const result = await runCommand(config.hermesCommand, config.hermesStatusArgs, config.rootDir);
-  if (result.code === 0) {
-    return {
-      ok: true,
-      detail: `${result.stdout || 'command available'}; model hint: ${config.hermesModelHint || 'not set'}`,
-    };
+  const binding = await validateHermesLmStudioBinding(config, resolution.modelId);
+  if (!binding.ok) {
+    return binding;
   }
 
-  return {
-    ok: false,
-    detail: result.stderr || result.stdout || 'status command failed',
-  };
+  return { ok: true, detail: `${binding.detail}; LM Studio target: ${resolution.modelId}` };
 };
 
 export const ensureHermes = async (config: RuntimeConfig): Promise<ServiceStatus> => {
@@ -637,12 +1038,19 @@ export const ensureHermes = async (config: RuntimeConfig): Promise<ServiceStatus
     return install;
   }
 
+  const binding = await ensureHermesLmStudioBinding(config);
+  if (!binding.ok) {
+    return binding;
+  }
+
   const initial = await checkHermes(config);
   if (initial.ok || !config.hermesEnabled || !config.hermesStartCommand) {
     return initial;
   }
 
-  await launchDetachedShell(config.hermesStartCommand, config.rootDir);
+  await launchDetachedShell(config.hermesStartCommand, config.rootDir, {
+    HERMES_HOME: config.hermesHomeDir,
+  });
   return waitForService(() => checkHermes(config));
 };
 
@@ -698,28 +1106,57 @@ export const checkNemoClaw = async (config: RuntimeConfig): Promise<ServiceStatu
     };
   }
 
+  const resolution = await resolveNemoClawModelFromLmStudio(config);
+  if (!resolution.ok || !resolution.modelId) {
+    return { ok: false, detail: resolution.detail };
+  }
+
+  const binding = await validateNemoClawBinding(config, resolution.modelId);
+  if (!binding.ok) {
+    return binding;
+  }
+
   if (config.nemoClawStatusArgs.length === 0) {
     return {
       ok: true,
-      detail: `command available; provider: ${config.nemoClawProvider}; model: ${config.nemoClawModel}; sandbox: ${config.nemoClawSandboxName}`,
+      detail: binding.detail,
     };
   }
 
   const result = await runCommand(config.nemoClawCommand, config.nemoClawStatusArgs, config.rootDir);
   if (result.code === 0) {
-    return { ok: true, detail: result.stdout || 'installed' };
+    return { ok: true, detail: `${binding.detail}; ${result.stdout || 'installed'}` };
   }
 
   return { ok: false, detail: result.stderr || result.stdout || 'status command failed' };
 };
 
 export const ensureNemoClaw = async (config: RuntimeConfig): Promise<ServiceStatus> => {
+  if (!config.nemoClawEnabled) {
+    return { ok: false, detail: 'disabled, but this package expects NemoClaw to be present' };
+  }
+
+  const exists = await commandExists(config.nemoClawCommand, config.rootDir);
+  if (!exists) {
+    return {
+      ok: false,
+      detail: `command not found: ${config.nemoClawCommand}`,
+    };
+  }
+
   const initial = await checkNemoClaw(config);
-  if (initial.ok || !config.nemoClawEnabled || !config.nemoClawSetupCommand) {
+  if (initial.ok || !config.nemoClawSetupCommand) {
     return initial;
   }
 
-  const setup = await runShellCommand(config.nemoClawSetupCommand, config.rootDir);
+  const resolution = await resolveNemoClawModelFromLmStudio(config);
+  if (!resolution.ok || !resolution.modelId) {
+    return { ok: false, detail: resolution.detail };
+  }
+
+  const setup = config.nemoClawProvider.trim().toLowerCase() === 'custom'
+    ? await runManagedNemoClawSetup(config, resolution.modelId)
+    : await runShellCommand(config.nemoClawSetupCommand, config.rootDir);
   if (setup.code !== 0) {
     return {
       ok: false,

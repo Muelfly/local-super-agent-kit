@@ -8,6 +8,7 @@
     "node": ">=20"
   },
   "scripts": {
+    "postinstall": "node --import tsx src/cli.ts install-lmstudio-mcp",
     "bootstrap:auto": "tsx src/cli.ts bootstrap-auto",
     "bootstrap:4060ti": "tsx src/cli.ts bootstrap --profile 4060ti-8b",
     "bootstrap:3060ti": "tsx src/cli.ts bootstrap --profile 3060ti-30b",

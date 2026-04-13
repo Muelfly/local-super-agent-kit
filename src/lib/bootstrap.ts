@@ -87,11 +87,15 @@ export const runBootstrap = async (rootDir: string, profile: ProfileName): Promi
   await installLmStudioMcpServer(rootDir);
   const config = await loadRuntimeConfig(rootDir);
   const generated = await generateToolSurface(config);
-  const [lmstudio, modelBundleStatus, n8n, controlplane, openjarvis, openclaw, nemoclaw, hermes, chatsdk] = await Promise.all([
+  const n8nPromise = ensureN8n(config);
+  const controlPlanePromise = ensureControlPlane(config);
+  const modelBundleStatus = await ensureLmStudioModelBundle(config);
+  const [lmstudio, n8n, controlplane] = await Promise.all([
     ensureLmStudio(config),
-    ensureLmStudioModelBundle(config),
-    ensureN8n(config),
-    ensureControlPlane(config),
+    n8nPromise,
+    controlPlanePromise,
+  ]);
+  const [openjarvis, openclaw, nemoclaw, hermes, chatsdk] = await Promise.all([
     ensureOpenJarvis(config),
     ensureOpenClaw(config),
     ensureNemoClaw(config),
@@ -117,11 +121,15 @@ export const runBootstrapAuto = async (rootDir: string): Promise<DoctorReport> =
   await installLmStudioMcpServer(rootDir);
   const config = await loadRuntimeConfig(rootDir);
   const generated = await generateToolSurface(config);
-  const [lmstudio, modelBundleStatus, n8n, controlplane, openjarvis, openclaw, nemoclaw, hermes, chatsdk] = await Promise.all([
+  const n8nPromise = ensureN8n(config);
+  const controlPlanePromise = ensureControlPlane(config);
+  const modelBundleStatus = await ensureLmStudioModelBundle(config);
+  const [lmstudio, n8n, controlplane] = await Promise.all([
     ensureLmStudio(config),
-    ensureLmStudioModelBundle(config),
-    ensureN8n(config),
-    ensureControlPlane(config),
+    n8nPromise,
+    controlPlanePromise,
+  ]);
+  const [openjarvis, openclaw, nemoclaw, hermes, chatsdk] = await Promise.all([
     ensureOpenJarvis(config),
     ensureOpenClaw(config),
     ensureNemoClaw(config),
@@ -154,6 +162,7 @@ export const runGenerateToolSurface = async (rootDir: string): Promise<string[]>
 
 export const runStartOpenJarvis = async (rootDir: string): Promise<ServiceStatus> => {
   const config = await loadRuntimeConfig(rootDir);
+  await ensureLmStudioModelBundle(config);
   return ensureOpenJarvis(config);
 };
 
@@ -168,6 +177,7 @@ export const runInstallLmStudioMcp = async (rootDir: string): Promise<string> =>
 
 export const runStartOptionalLanes = async (rootDir: string): Promise<Record<string, ServiceStatus>> => {
   const config = await loadRuntimeConfig(rootDir);
+  await ensureLmStudioModelBundle(config);
   const [openjarvis, openclaw, nemoclaw, hermes, chatsdk] = await Promise.all([
     ensureOpenJarvis(config),
     ensureOpenClaw(config),

@@ -27,11 +27,13 @@ export type RuntimeConfig = {
   openJarvisStatusArgs: string[];
   openJarvisServeCommand: string;
   openJarvisModelHint: string;
+  openJarvisModelCandidates: string[];
   openClawEnabled: boolean;
   openClawCommand: string;
   openClawBaseUrl: string;
   openClawApiKey: string;
   openClawModel: string;
+  openClawModelCandidates: string[];
   openClawStateDir: string;
   openClawConfigPath: string;
   openClawWorkspaceDir: string;
@@ -44,6 +46,9 @@ export type RuntimeConfig = {
   nemoClawSetupCommand: string;
   nemoClawProvider: string;
   nemoClawModel: string;
+  nemoClawModelCandidates: string[];
+  nemoClawEndpointUrl: string;
+  nemoClawCompatibleApiKey: string;
   nemoClawSandboxName: string;
   hermesEnabled: boolean;
   hermesCommand: string;
@@ -51,6 +56,8 @@ export type RuntimeConfig = {
   hermesStatusArgs: string[];
   hermesStartCommand: string;
   hermesModelHint: string;
+  hermesModelCandidates: string[];
+  hermesHomeDir: string;
   nvidiaApiKey: string;
   n8nEnabled: boolean;
   n8nHostPort: number;
@@ -88,6 +95,41 @@ const parseBoolean = (value: string | undefined, fallback: boolean): boolean => 
 const parseInteger = (value: string | undefined, fallback: number): number => {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
+
+const parseStringList = (value: string | undefined): string[] => {
+  if (value === undefined || value.trim() === '') {
+    return [];
+  }
+
+  return value
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+};
+
+const mergeUniqueStrings = (...groups: Array<string[] | undefined>): string[] => {
+  const seen = new Set<string>();
+  const merged: string[] = [];
+
+  for (const group of groups) {
+    for (const value of group ?? []) {
+      const trimmed = value.trim();
+      if (!trimmed) {
+        continue;
+      }
+
+      const key = trimmed.toLowerCase();
+      if (seen.has(key)) {
+        continue;
+      }
+
+      seen.add(key);
+      merged.push(trimmed);
+    }
+  }
+
+  return merged;
 };
 
 const quoteShellValue = (value: string): string => {
@@ -176,19 +218,35 @@ const defaultOpenJarvisServeCommand = (command: string, baseUrl: string, modelHi
   return args.join(' ');
 };
 
-const defaultNemoClawSetupCommand = (provider: string, model: string, sandboxName: string): string => {
+const defaultNemoClawSetupCommand = (
+  provider: string,
+  model: string,
+  sandboxName: string,
+  endpointUrl: string,
+  compatibleApiKey: string,
+): string => {
+  const envAssignments = [
+    'NON_INTERACTIVE=1',
+    'ACCEPT_THIRD_PARTY_SOFTWARE=1',
+    `NEMOCLAW_PROVIDER=${quotePosixValue(provider)}`,
+    `NEMOCLAW_MODEL=${quotePosixValue(model)}`,
+    `NEMOCLAW_SANDBOX_NAME=${quotePosixValue(sandboxName)}`,
+  ];
+
+  if (provider.trim().toLowerCase() === 'custom') {
+    if (endpointUrl.trim()) {
+      envAssignments.push(`NEMOCLAW_ENDPOINT_URL=${quotePosixValue(endpointUrl)}`);
+    }
+    if (compatibleApiKey.trim()) {
+      envAssignments.push(`COMPATIBLE_API_KEY=${quotePosixValue(compatibleApiKey)}`);
+    }
+  }
+
   const linuxCommand = [
     'set -e',
     'tmpfile=$(mktemp)',
     'curl -fsSL https://www.nvidia.com/nemoclaw.sh -o "$tmpfile"',
-    [
-      'NON_INTERACTIVE=1',
-      'ACCEPT_THIRD_PARTY_SOFTWARE=1',
-      `NEMOCLAW_PROVIDER=${quotePosixValue(provider)}`,
-      `NEMOCLAW_MODEL=${quotePosixValue(model)}`,
-      `NEMOCLAW_SANDBOX_NAME=${quotePosixValue(sandboxName)}`,
-      'bash "$tmpfile"',
-    ].join(' '),
+    [...envAssignments, 'bash "$tmpfile"'].join(' '),
     'rm -f "$tmpfile"',
   ].join('; ');
 
@@ -297,33 +355,57 @@ export const loadRuntimeConfig = async (rootDir: string): Promise<RuntimeConfig>
   const controlPlaneHost = get('CONTROL_PLANE_HOST', '127.0.0.1');
   const controlPlanePort = parseInteger(get('CONTROL_PLANE_PORT'), 4391);
   const controlPlaneBaseUrl = get('CONTROL_PLANE_BASE_URL', `http://${controlPlaneHost}:${controlPlanePort}`);
+  const lmStudioBaseUrl = get('LM_STUDIO_BASE_URL', 'http://127.0.0.1:1234/v1');
   const lmStudioModelHint = get('LM_STUDIO_MODEL_HINT', 'nemotron-nano-8b');
+  const lmStudioModelCandidates = mergeUniqueStrings(parseStringList(get('LM_STUDIO_MODEL_CANDIDATES')), [lmStudioModelHint]);
   const openJarvisCommand = get('OPENJARVIS_COMMAND', defaultOpenJarvisCommand(rootDir));
   const openJarvisBaseUrl = get('OPENJARVIS_BASE_URL', 'http://127.0.0.1:8000/v1');
   const openJarvisModelHint = get('OPENJARVIS_MODEL_HINT', lmStudioModelHint);
+  const openJarvisModelCandidates = mergeUniqueStrings(
+    parseStringList(get('OPENJARVIS_MODEL_CANDIDATES')),
+    [openJarvisModelHint],
+    lmStudioModelCandidates,
+  );
   const openClawCommand = get('OPENCLAW_COMMAND', defaultOpenClawCommand());
   const openClawBaseUrl = get('OPENCLAW_BASE_URL', 'http://127.0.0.1:18789/v1');
   const openClawBinding = parseServiceBinding(openClawBaseUrl, 18789);
   const openClawStateDir = get('OPENCLAW_STATE_DIR', path.join(rootDir, runtimeStateDir, 'openclaw'));
   const openClawConfigPath = get('OPENCLAW_CONFIG_PATH', path.join(openClawStateDir, 'openclaw.json'));
   const openClawWorkspaceDir = get('OPENCLAW_WORKSPACE_DIR', rootDir);
+  const openClawModel = get('OPENCLAW_MODEL', lmStudioModelHint);
+  const openClawModelCandidates = mergeUniqueStrings(
+    parseStringList(get('OPENCLAW_MODEL_CANDIDATES')),
+    [openClawModel],
+    lmStudioModelCandidates,
+  );
   const nemoClawCommand = get('NEMOCLAW_COMMAND', defaultNemoClawCommand(rootDir));
-  const nemoClawProvider = get('NEMOCLAW_PROVIDER', 'ollama');
-  const nemoClawModel = get('NEMOCLAW_MODEL', 'qwen2.5:7b');
+  const nemoClawProvider = get('NEMOCLAW_PROVIDER', 'custom');
+  const nemoClawModel = get('NEMOCLAW_MODEL', lmStudioModelHint);
+  const nemoClawModelCandidates = mergeUniqueStrings(
+    parseStringList(get('NEMOCLAW_MODEL_CANDIDATES')),
+    [nemoClawModel],
+    lmStudioModelCandidates,
+  );
+  const nemoClawEndpointUrl = get('NEMOCLAW_ENDPOINT_URL', lmStudioBaseUrl);
+  const nemoClawCompatibleApiKey = get('NEMOCLAW_COMPATIBLE_API_KEY', 'lmstudio-local');
   const nemoClawSandboxName = get('NEMOCLAW_SANDBOX_NAME', 'local-super-agent');
   const hermesCommand = get('HERMES_COMMAND', defaultHermesCommand());
+  const hermesModelHint = get('HERMES_MODEL_HINT', lmStudioModelHint);
+  const hermesModelCandidates = mergeUniqueStrings(
+    parseStringList(get('HERMES_MODEL_CANDIDATES')),
+    [hermesModelHint],
+    lmStudioModelCandidates,
+  );
+  const hermesHomeDir = get('HERMES_HOME_DIR', path.join(rootDir, runtimeStateDir, 'hermes'));
 
   return {
     rootDir,
-    lmStudioBaseUrl: get('LM_STUDIO_BASE_URL', 'http://127.0.0.1:1234/v1'),
+    lmStudioBaseUrl,
     lmStudioAppPath: get('LM_STUDIO_APP_PATH'),
     lmStudioAutoLaunch: parseBoolean(get('LM_STUDIO_AUTO_LAUNCH'), true),
     lmStudioHealthTimeoutMs: parseInteger(get('LM_STUDIO_HEALTH_TIMEOUT_MS'), 45_000),
     lmStudioModelHint,
-    lmStudioModelCandidates: get('LM_STUDIO_MODEL_CANDIDATES', '')
-      .split(',')
-      .map((item) => item.trim())
-      .filter(Boolean),
+    lmStudioModelCandidates,
     lmStudioAutoAcquireModels: parseBoolean(get('LM_STUDIO_AUTO_ACQUIRE_MODELS'), false),
     lmStudioAutoLoadPrimaryModel: parseBoolean(get('LM_STUDIO_AUTO_LOAD_PRIMARY_MODEL'), false),
     lmStudioProfile: get('LM_STUDIO_PROFILE', '4060ti-8b'),
@@ -334,11 +416,13 @@ export const loadRuntimeConfig = async (rootDir: string): Promise<RuntimeConfig>
     openJarvisStatusArgs: get('OPENJARVIS_STATUS_ARGS', 'status').split(' ').map((item) => item.trim()).filter(Boolean),
     openJarvisServeCommand: get('OPENJARVIS_SERVE_COMMAND', defaultOpenJarvisServeCommand(openJarvisCommand, openJarvisBaseUrl, openJarvisModelHint)),
     openJarvisModelHint,
+    openJarvisModelCandidates,
     openClawEnabled: parseBoolean(get('OPENCLAW_ENABLED'), true),
     openClawCommand,
     openClawBaseUrl,
     openClawApiKey: get('OPENCLAW_API_KEY'),
-    openClawModel: get('OPENCLAW_MODEL', lmStudioModelHint),
+    openClawModel,
+    openClawModelCandidates,
     openClawStateDir,
     openClawConfigPath,
     openClawWorkspaceDir,
@@ -348,16 +432,21 @@ export const loadRuntimeConfig = async (rootDir: string): Promise<RuntimeConfig>
     nemoClawEnabled: parseBoolean(get('NEMOCLAW_ENABLED'), true),
     nemoClawCommand,
     nemoClawStatusArgs: get('NEMOCLAW_STATUS_ARGS', 'status').split(' ').map((item) => item.trim()).filter(Boolean),
-    nemoClawSetupCommand: get('NEMOCLAW_SETUP_COMMAND', defaultNemoClawSetupCommand(nemoClawProvider, nemoClawModel, nemoClawSandboxName)),
+    nemoClawSetupCommand: get('NEMOCLAW_SETUP_COMMAND', defaultNemoClawSetupCommand(nemoClawProvider, nemoClawModel, nemoClawSandboxName, nemoClawEndpointUrl, nemoClawCompatibleApiKey)),
     nemoClawProvider,
     nemoClawModel,
+    nemoClawModelCandidates,
+    nemoClawEndpointUrl,
+    nemoClawCompatibleApiKey,
     nemoClawSandboxName,
     hermesEnabled: parseBoolean(get('HERMES_ENABLED'), true),
     hermesCommand,
     hermesInstallCommand: get('HERMES_INSTALL_COMMAND', defaultHermesInstallCommand()),
     hermesStatusArgs: get('HERMES_STATUS_ARGS', 'status --all').split(' ').map((item) => item.trim()).filter(Boolean),
     hermesStartCommand: get('HERMES_START_COMMAND'),
-    hermesModelHint: get('HERMES_MODEL_HINT'),
+    hermesModelHint,
+    hermesModelCandidates,
+    hermesHomeDir,
     nvidiaApiKey: get('NVIDIA_API_KEY'),
     n8nEnabled: parseBoolean(get('N8N_ENABLED'), true),
     n8nHostPort: parseInteger(get('N8N_HOST_PORT'), 5679),

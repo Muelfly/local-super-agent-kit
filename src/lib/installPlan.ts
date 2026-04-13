@@ -41,14 +41,25 @@ export type InstallPlan = {
   envOverrides: Record<string, string>;
   recommendedModels: RecommendedModel[];
   openJarvisModel: string;
+  openJarvisModelCandidates: string[];
   openClawModel: string;
+  openClawModelCandidates: string[];
   hermesModel: string;
+  hermesModelCandidates: string[];
   nemoClawModel: string;
+  nemoClawModelCandidates: string[];
   nemoClawProvider: string;
   openClawConfigured: boolean;
   hermesAvailable: boolean;
   nemoClawAvailable: boolean;
   notes: string[];
+};
+
+const formatCandidatePolicy = (primary: string, candidates: string[]): string => {
+  const alternates = candidates.filter((candidate) => candidate !== primary);
+  return alternates.length > 0
+    ? `${primary} (accepts: ${alternates.join(', ')})`
+    : primary;
 };
 
 const roundGiB = (bytes: number): number => Math.max(1, Math.round(bytes / (1024 ** 3)));
@@ -227,18 +238,18 @@ const build4060Ti16Bundle = (
 ): InstallPlan => {
   const recommendedModels: RecommendedModel[] = [
     {
-      model: 'qwen2.5-14b-instruct',
+      model: 'nemotron-nano-8b',
       role: 'chat-primary',
       autoAcquire: true,
       autoLoad: true,
-      rationale: '4060 Ti class hardware with 16GB VRAM can usually sustain a 14B local front-door model better than the conservative 8B default.',
+      rationale: 'Even on 16GB hardware, the packaged teammate path should stay on the stable 8B front door by default so every helper lane sees the same local surface.',
     },
     {
-      model: 'nemotron-nano-8b',
-      role: 'chat-fallback',
-      autoAcquire: true,
+      model: 'qwen2.5-14b-instruct',
+      role: 'alternate',
+      autoAcquire: false,
       autoLoad: false,
-      rationale: 'Keeps a lighter fallback lane available when the 14B model is too slow for interactive routing or helper calls.',
+      rationale: 'A 14B option still makes sense on some 16GB machines, but it should stay an explicit alternate instead of redefining the default packaged path.',
     },
     {
       model: 'gemma-4',
@@ -248,6 +259,7 @@ const build4060Ti16Bundle = (
       rationale: 'Gemma can still outperform the default choice on some prompt mixes, so keep it in the candidate list instead of hardcoding one winner.',
     },
   ];
+  const recommendedModelCandidates = recommendedModels.map((model) => model.model);
   const autoAcquire = recommendedModels.some((model) => model.autoAcquire);
   const autoLoad = recommendedModels.some((model) => model.autoLoad);
 
@@ -258,32 +270,42 @@ const build4060Ti16Bundle = (
     bundleLabel: '4060 Ti 16GB hybrid local bundle',
     envOverrides: {
       LM_STUDIO_PROFILE: 'auto-4060ti-16g-hybrid',
-      LM_STUDIO_MODEL_HINT: 'qwen2.5-14b-instruct',
-      LM_STUDIO_MODEL_CANDIDATES: recommendedModels.map((model) => model.model).join(','),
+      LM_STUDIO_MODEL_HINT: 'nemotron-nano-8b',
+      LM_STUDIO_MODEL_CANDIDATES: recommendedModelCandidates.join(','),
       LM_STUDIO_AUTO_ACQUIRE_MODELS: autoAcquire ? 'true' : 'false',
       LM_STUDIO_AUTO_LOAD_PRIMARY_MODEL: autoLoad ? 'true' : 'false',
       OPENJARVIS_ENABLED: 'true',
       OPENJARVIS_MODEL_HINT: 'nemotron-nano-8b',
+      OPENJARVIS_MODEL_CANDIDATES: recommendedModelCandidates.join(','),
       OPENCLAW_ENABLED: 'true',
-      OPENCLAW_MODEL: 'qwen2.5-14b-instruct',
+      OPENCLAW_MODEL: 'nemotron-nano-8b',
+      OPENCLAW_MODEL_CANDIDATES: recommendedModelCandidates.join(','),
       NEMOCLAW_ENABLED: 'true',
-      NEMOCLAW_PROVIDER: 'ollama',
-      NEMOCLAW_MODEL: 'qwen2.5:14b',
+      NEMOCLAW_PROVIDER: 'custom',
+      NEMOCLAW_MODEL: 'nemotron-nano-8b',
+      NEMOCLAW_MODEL_CANDIDATES: recommendedModelCandidates.join(','),
+      NEMOCLAW_ENDPOINT_URL: 'http://127.0.0.1:1234/v1',
+      NEMOCLAW_COMPATIBLE_API_KEY: 'lmstudio-local',
       HERMES_ENABLED: 'true',
-      HERMES_MODEL_HINT: 'qwen2.5-14b-instruct',
+      HERMES_MODEL_HINT: 'nemotron-nano-8b',
+      HERMES_MODEL_CANDIDATES: recommendedModelCandidates.join(','),
     },
     recommendedModels,
     openJarvisModel: 'nemotron-nano-8b',
-    openClawModel: 'qwen2.5-14b-instruct',
-    hermesModel: 'qwen2.5-14b-instruct',
-    nemoClawModel: 'qwen2.5:14b',
-    nemoClawProvider: 'ollama',
+    openJarvisModelCandidates: recommendedModelCandidates,
+    openClawModel: 'nemotron-nano-8b',
+    openClawModelCandidates: recommendedModelCandidates,
+    hermesModel: 'nemotron-nano-8b',
+    hermesModelCandidates: recommendedModelCandidates,
+    nemoClawModel: 'nemotron-nano-8b',
+    nemoClawModelCandidates: recommendedModelCandidates,
+    nemoClawProvider: 'custom',
     openClawConfigured,
     hermesAvailable,
     nemoClawAvailable,
     notes: [
       `Detected assets: ${describeGpus(snapshot)}; ${snapshot.systemMemoryGiB}GB system RAM.`,
-      'This bundle keeps OpenJarvis on a lighter chain model while LM Studio Chat carries the heavier front-door model.',
+      'This bundle keeps the packaged path on one 8B front door even on stronger hardware, while still surfacing heavier alternates as explicit choices.',
       'n8n remains the experimental orchestration lane; treat it as a convenience layer, not the semantic core.',
     ],
   };
@@ -325,6 +347,7 @@ const build4060Ti8Bundle = (
       rationale: 'Gemma may still end up being the best practical choice for some users, so expose it in the bundle rather than hiding it.',
     },
   ];
+  const recommendedModelCandidates = recommendedModels.map((model) => model.model);
   const autoAcquire = recommendedModels.some((model) => model.autoAcquire);
   const autoLoad = recommendedModels.some((model) => model.autoLoad);
 
@@ -336,32 +359,42 @@ const build4060Ti8Bundle = (
     envOverrides: {
       LM_STUDIO_PROFILE: 'auto-4060ti-8g-balanced',
       LM_STUDIO_MODEL_HINT: 'nemotron-nano-8b',
-      LM_STUDIO_MODEL_CANDIDATES: recommendedModels.map((model) => model.model).join(','),
+      LM_STUDIO_MODEL_CANDIDATES: recommendedModelCandidates.join(','),
       LM_STUDIO_AUTO_ACQUIRE_MODELS: autoAcquire ? 'true' : 'false',
       LM_STUDIO_AUTO_LOAD_PRIMARY_MODEL: autoLoad ? 'true' : 'false',
       OPENJARVIS_ENABLED: 'true',
-      OPENJARVIS_MODEL_HINT: 'qwen2.5-7b-instruct',
+      OPENJARVIS_MODEL_HINT: 'nemotron-nano-8b',
+      OPENJARVIS_MODEL_CANDIDATES: recommendedModelCandidates.join(','),
       OPENCLAW_ENABLED: 'true',
       OPENCLAW_MODEL: 'nemotron-nano-8b',
+      OPENCLAW_MODEL_CANDIDATES: recommendedModelCandidates.join(','),
       NEMOCLAW_ENABLED: 'true',
-      NEMOCLAW_PROVIDER: 'ollama',
-      NEMOCLAW_MODEL: 'qwen2.5:7b',
+      NEMOCLAW_PROVIDER: 'custom',
+      NEMOCLAW_MODEL: 'nemotron-nano-8b',
+      NEMOCLAW_MODEL_CANDIDATES: recommendedModelCandidates.join(','),
+      NEMOCLAW_ENDPOINT_URL: 'http://127.0.0.1:1234/v1',
+      NEMOCLAW_COMPATIBLE_API_KEY: 'lmstudio-local',
       HERMES_ENABLED: 'true',
-      HERMES_MODEL_HINT: 'qwen2.5-7b-instruct',
+      HERMES_MODEL_HINT: 'nemotron-nano-8b',
+      HERMES_MODEL_CANDIDATES: recommendedModelCandidates.join(','),
     },
     recommendedModels,
-    openJarvisModel: 'qwen2.5-7b-instruct',
+    openJarvisModel: 'nemotron-nano-8b',
+    openJarvisModelCandidates: recommendedModelCandidates,
     openClawModel: 'nemotron-nano-8b',
-    hermesModel: 'qwen2.5-7b-instruct',
-    nemoClawModel: 'qwen2.5:7b',
-    nemoClawProvider: 'ollama',
+    openClawModelCandidates: recommendedModelCandidates,
+    hermesModel: 'nemotron-nano-8b',
+    hermesModelCandidates: recommendedModelCandidates,
+    nemoClawModel: 'nemotron-nano-8b',
+    nemoClawModelCandidates: recommendedModelCandidates,
+    nemoClawProvider: 'custom',
     openClawConfigured,
     hermesAvailable,
     nemoClawAvailable,
     notes: [
       `Detected assets: ${describeGpus(snapshot)}; ${snapshot.systemMemoryGiB}GB system RAM.`,
       'This bundle prefers a conservative front-door model, but still records 14B and Gemma candidates so packaged installs do not look single-track.',
-      'OpenJarvis, OpenClaw, Hermes, and NemoClaw stay aligned on the lighter chain model.',
+      'OpenJarvis, OpenClaw, Hermes, and NemoClaw stay aligned on the same LM Studio front-door model.',
     ],
   };
 };
@@ -395,6 +428,7 @@ const build3060TiBundle = (
       rationale: 'Useful as a helper-lane model for OpenJarvis, OpenClaw, or Hermes while the primary chat choice remains conservative.',
     },
   ];
+  const recommendedModelCandidates = recommendedModels.map((model) => model.model);
   const autoAcquire = recommendedModels.some((model) => model.autoAcquire);
   const autoLoad = recommendedModels.some((model) => model.autoLoad);
 
@@ -406,32 +440,42 @@ const build3060TiBundle = (
     envOverrides: {
       LM_STUDIO_PROFILE: 'auto-3060ti-offload',
       LM_STUDIO_MODEL_HINT: 'nemotron-nano-8b',
-      LM_STUDIO_MODEL_CANDIDATES: recommendedModels.map((model) => model.model).join(','),
+      LM_STUDIO_MODEL_CANDIDATES: recommendedModelCandidates.join(','),
       LM_STUDIO_AUTO_ACQUIRE_MODELS: autoAcquire ? 'true' : 'false',
       LM_STUDIO_AUTO_LOAD_PRIMARY_MODEL: autoLoad ? 'true' : 'false',
       OPENJARVIS_ENABLED: 'true',
-      OPENJARVIS_MODEL_HINT: 'qwen2.5-7b-instruct',
+      OPENJARVIS_MODEL_HINT: 'nemotron-nano-8b',
+      OPENJARVIS_MODEL_CANDIDATES: recommendedModelCandidates.join(','),
       OPENCLAW_ENABLED: 'true',
       OPENCLAW_MODEL: 'nemotron-nano-8b',
+      OPENCLAW_MODEL_CANDIDATES: recommendedModelCandidates.join(','),
       NEMOCLAW_ENABLED: 'true',
-      NEMOCLAW_PROVIDER: 'ollama',
-      NEMOCLAW_MODEL: 'qwen2.5:7b',
+      NEMOCLAW_PROVIDER: 'custom',
+      NEMOCLAW_MODEL: 'nemotron-nano-8b',
+      NEMOCLAW_MODEL_CANDIDATES: recommendedModelCandidates.join(','),
+      NEMOCLAW_ENDPOINT_URL: 'http://127.0.0.1:1234/v1',
+      NEMOCLAW_COMPATIBLE_API_KEY: 'lmstudio-local',
       HERMES_ENABLED: 'true',
-      HERMES_MODEL_HINT: 'qwen2.5-7b-instruct',
+      HERMES_MODEL_HINT: 'nemotron-nano-8b',
+      HERMES_MODEL_CANDIDATES: recommendedModelCandidates.join(','),
     },
     recommendedModels,
-    openJarvisModel: 'qwen2.5-7b-instruct',
+    openJarvisModel: 'nemotron-nano-8b',
+    openJarvisModelCandidates: recommendedModelCandidates,
     openClawModel: 'nemotron-nano-8b',
-    hermesModel: 'qwen2.5-7b-instruct',
-    nemoClawModel: 'qwen2.5:7b',
-    nemoClawProvider: 'ollama',
+    openClawModelCandidates: recommendedModelCandidates,
+    hermesModel: 'nemotron-nano-8b',
+    hermesModelCandidates: recommendedModelCandidates,
+    nemoClawModel: 'nemotron-nano-8b',
+    nemoClawModelCandidates: recommendedModelCandidates,
+    nemoClawProvider: 'custom',
     openClawConfigured,
     hermesAvailable,
     nemoClawAvailable,
     notes: [
       `Detected assets: ${describeGpus(snapshot)}; ${snapshot.systemMemoryGiB}GB system RAM.`,
       'The package keeps the historical 30B profile available, but installs should still default to an 8B front door unless the teammate explicitly accepts the offload tradeoff.',
-      'OpenJarvis, OpenClaw, Hermes, and NemoClaw stay on a lighter chain model even when the front-door model is conservative.',
+      'OpenJarvis, OpenClaw, Hermes, and NemoClaw stay aligned to the same 8B LM Studio surface in the default packaged path.',
     ],
   };
 };
@@ -458,6 +502,7 @@ const buildGenericBundle = (
       rationale: 'Provides a second instruct-style option for the packaged runtime chain without assuming high VRAM.',
     },
   ];
+  const recommendedModelCandidates = recommendedModels.map((model) => model.model);
   const autoAcquire = recommendedModels.some((model) => model.autoAcquire);
   const autoLoad = recommendedModels.some((model) => model.autoLoad);
 
@@ -469,32 +514,42 @@ const buildGenericBundle = (
     envOverrides: {
       LM_STUDIO_PROFILE: 'auto-generic-local',
       LM_STUDIO_MODEL_HINT: 'nemotron-nano-8b',
-      LM_STUDIO_MODEL_CANDIDATES: recommendedModels.map((model) => model.model).join(','),
+      LM_STUDIO_MODEL_CANDIDATES: recommendedModelCandidates.join(','),
       LM_STUDIO_AUTO_ACQUIRE_MODELS: autoAcquire ? 'true' : 'false',
       LM_STUDIO_AUTO_LOAD_PRIMARY_MODEL: autoLoad ? 'true' : 'false',
       OPENJARVIS_ENABLED: 'true',
-      OPENJARVIS_MODEL_HINT: 'qwen2.5-7b-instruct',
+      OPENJARVIS_MODEL_HINT: 'nemotron-nano-8b',
+      OPENJARVIS_MODEL_CANDIDATES: recommendedModelCandidates.join(','),
       OPENCLAW_ENABLED: 'true',
       OPENCLAW_MODEL: 'nemotron-nano-8b',
+      OPENCLAW_MODEL_CANDIDATES: recommendedModelCandidates.join(','),
       NEMOCLAW_ENABLED: 'true',
-      NEMOCLAW_PROVIDER: 'ollama',
-      NEMOCLAW_MODEL: 'qwen2.5:7b',
+      NEMOCLAW_PROVIDER: 'custom',
+      NEMOCLAW_MODEL: 'nemotron-nano-8b',
+      NEMOCLAW_MODEL_CANDIDATES: recommendedModelCandidates.join(','),
+      NEMOCLAW_ENDPOINT_URL: 'http://127.0.0.1:1234/v1',
+      NEMOCLAW_COMPATIBLE_API_KEY: 'lmstudio-local',
       HERMES_ENABLED: 'true',
-      HERMES_MODEL_HINT: 'qwen2.5-7b-instruct',
+      HERMES_MODEL_HINT: 'nemotron-nano-8b',
+      HERMES_MODEL_CANDIDATES: recommendedModelCandidates.join(','),
     },
     recommendedModels,
-    openJarvisModel: 'qwen2.5-7b-instruct',
+    openJarvisModel: 'nemotron-nano-8b',
+    openJarvisModelCandidates: recommendedModelCandidates,
     openClawModel: 'nemotron-nano-8b',
-    hermesModel: 'qwen2.5-7b-instruct',
-    nemoClawModel: 'qwen2.5:7b',
-    nemoClawProvider: 'ollama',
+    openClawModelCandidates: recommendedModelCandidates,
+    hermesModel: 'nemotron-nano-8b',
+    hermesModelCandidates: recommendedModelCandidates,
+    nemoClawModel: 'nemotron-nano-8b',
+    nemoClawModelCandidates: recommendedModelCandidates,
+    nemoClawProvider: 'custom',
     openClawConfigured,
     hermesAvailable,
     nemoClawAvailable,
     notes: [
       `Detected assets: ${describeGpus(snapshot)}; ${snapshot.systemMemoryGiB}GB system RAM.`,
       'No curated GPU profile matched cleanly, so the package falls back to the lighter local bundle instead of pretending it knows the best heavy model.',
-      'OpenJarvis, OpenClaw, Hermes, and NemoClaw default to the lighter chain model so the packaged stack stays bootable on mixed hardware.',
+      'OpenJarvis, OpenClaw, Hermes, and NemoClaw default to the same LM Studio 8B surface so the packaged stack stays coherent on mixed hardware.',
     ],
   };
 };
@@ -549,10 +604,10 @@ export const formatInstallPlanReport = (plan: InstallPlan): string => {
     `auto bundle: ${plan.bundleLabel}`,
     `base profile: ${plan.selectedProfile}`,
     `hardware: ${describeGpus(plan.hardware)}; ${plan.hardware.systemMemoryGiB}GB RAM; ${plan.hardware.logicalCores} logical cores`,
-    `openjarvis model: ${plan.openJarvisModel}`,
-    `openclaw model: ${plan.openClawModel}${plan.openClawConfigured ? ' (gateway configured)' : ' (required gateway will be provisioned)'}`,
-    `hermes model: ${plan.hermesModel}${plan.hermesAvailable ? ' (runtime already present)' : ' (required runtime will be provisioned)'}`,
-    `nemoclaw model: ${plan.nemoClawModel} via ${plan.nemoClawProvider}${plan.nemoClawAvailable ? ' (runtime already present)' : ' (official onboard will provision it)'}`,
+    `openjarvis model policy: ${formatCandidatePolicy(plan.openJarvisModel, plan.openJarvisModelCandidates)}`,
+    `openclaw model policy: ${formatCandidatePolicy(plan.openClawModel, plan.openClawModelCandidates)}${plan.openClawConfigured ? ' (gateway configured)' : ' (required gateway will be provisioned)'}`,
+    `hermes model policy: ${formatCandidatePolicy(plan.hermesModel, plan.hermesModelCandidates)}${plan.hermesAvailable ? ' (runtime already present)' : ' (required runtime will be provisioned)'}`,
+    `nemoclaw model policy: ${formatCandidatePolicy(plan.nemoClawModel, plan.nemoClawModelCandidates)} via ${plan.nemoClawProvider}${plan.nemoClawAvailable ? ' (runtime already present)' : ' (official onboard will provision it)'}`,
     ...modelLines,
     ...plan.notes.map((note) => `note: ${note}`),
   ].join('\n');

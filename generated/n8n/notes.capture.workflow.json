@@ -135,7 +135,7 @@
   "settings": {},
   "staticData": null,
   "meta": {
-    "generatedBy": "local-super-agent-kit",
+    "generatedBy": "super-agent",
     "toolName": "notes.capture",
     "inputSchema": [
       {
