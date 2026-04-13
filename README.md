@@ -6,6 +6,7 @@ This repository is meant to give teammates a practical local runtime skeleton:
 
 - LM Studio as the default local model surface
 - hardware profiles for 4060 Ti 8B and 3060 Ti 30B targets
+- local control plane for file-backed state, tool generation, and evaluation hooks
 - optional OpenJarvis lane for local ops, telemetry, and evaluation
 - optional NemoClaw lane for sandboxed review and experimentation
 - self-hosted n8n as the deterministic automation surface
@@ -16,6 +17,7 @@ This repository is meant to give teammates a practical local runtime skeleton:
 ## Intended Shape
 
 - core control plane: local scripts plus VS Code tasks
+- control-plane runtime: local HTTP service for durable state and promotion hooks
 - reasoning surface: LM Studio OpenAI-compatible endpoint
 - orchestration surface: local n8n
 - optional accelerators: OpenJarvis, NemoClaw, shared MCP
@@ -47,7 +49,7 @@ If you plan to share this repo widely, keep the first-run path as close as possi
    - `npm install`
    - `npm run bootstrap:4060ti`
    - `npm run bootstrap:3060ti`
-6. Run `npm run doctor` to confirm the local stack status.
+6. Run `npm run doctor` to confirm LM Studio, n8n, and the local control plane are reachable.
 7. If you want the optional helper lanes, run `npm run start:optional-lanes`.
 
 ## Hardware Profiles
@@ -75,6 +77,7 @@ The repository ships tasks for:
 - bootstrap on the 4060 Ti 8B profile
 - bootstrap on the 3060 Ti 30B profile
 - doctor
+- control-plane startup
 - optional lane startup for OpenJarvis plus NemoClaw checks
 - Chat SDK ingress summary
 - n8n tool-surface generation
@@ -85,7 +88,8 @@ The repository ships tasks for:
 The starter now ships a thin Chat SDK ingress skeleton in `src/chat-sdk/bot.ts`.
 
 - it uses `chat` plus the official Discord and GitHub adapters
-- it keeps state in `@chat-adapter/state-memory` so teammates do not need Redis on day one
+- it keeps hot adapter state in `@chat-adapter/state-memory` so teammates do not need Redis on day one
+- it also writes a durable thread ledger under `.runtime/chat-sdk` so restarts do not erase all thread context
 - it is intentionally thin: the ingress should stay replaceable while LM Studio, n8n, and optional helper lanes remain the runtime core
 
 Use `npm run chat-sdk:summary` to see which adapters are currently configured and where to mount the webhook handlers in your own framework.
@@ -102,7 +106,23 @@ The starter keeps OpenJarvis and NemoClaw optional, but now bundles them more ex
 
 `npm run n8n:surface` reads `config/tools/default-surface.json` and writes starter workflows to `generated/n8n`.
 
-These exported workflows are safe placeholders. They are meant to give teammates an importable automation surface that can then be replaced by real branches.
+The built-in starter tools now route through the local control plane:
+
+- `web.fetch` performs a deterministic fetch and stores a runtime record
+- `notes.capture` writes a durable note capture record
+- `tool.generate` writes or updates `generated/tool-surface.generated.json`, regenerates workflows, validates artifacts, runs an optional OpenJarvis evaluation hook, and attempts an n8n import
+
+New generated tools start as generic handoff branches. They are immediately callable and record invocations, but you should replace them with dedicated control-plane handlers or richer n8n branches once they stabilize.
+
+Bootstrap now imports the generated workflow bundle into n8n as inactive review surfaces when the local dockerized n8n lane is available.
+
+## Long-Term Memory Note
+
+Hermes Claw is a plausible future migration path if this starter outgrows the current local control-plane plus file-ledger approach.
+
+- the documented `hermes claw migrate` flow can carry persona, user profile, long-term memory, daily memory files, skills, MCP server config, and provider settings forward
+- unsupported OpenClaw concepts are archived for manual review rather than silently dropped
+- that makes Hermes a reasonable upgrade path for richer long-term memory, but it is still optional and should not become the first-run dependency for this starter
 
 ## Suggested Next Steps
 

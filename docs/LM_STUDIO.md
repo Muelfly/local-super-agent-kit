@@ -17,6 +17,8 @@ Bootstrap can attempt to launch the LM Studio desktop app when:
 - `LM_STUDIO_AUTO_LAUNCH=true`
 - a local app path can be resolved
 
+When the bundled LM Studio CLI is available, bootstrap and doctor also try `lms server start` before they fall back to the desktop app. This helps on fresh Windows installs where the app is present but the local server is still off.
+
 If a teammate installs LM Studio in a nonstandard path, set `LM_STUDIO_APP_PATH` in `.env.local`.
 
 ## Model Profiles

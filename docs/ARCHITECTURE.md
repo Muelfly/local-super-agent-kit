@@ -7,6 +7,7 @@ This repository is a local super-agent starter, not a monolithic production cont
 It is meant to give teammates a portable local stack with clear ownership boundaries:
 
 - LM Studio: default local inference surface
+- local control plane: file-backed state, tool generation, evaluation, and promotion hooks
 - n8n: deterministic waits, retries, schedules, and webhook glue
 - OpenJarvis: optional local ops, telemetry, and evaluation lane
 - NemoClaw: optional sandbox or review lane
@@ -16,9 +17,18 @@ It is meant to give teammates a portable local stack with clear ownership bounda
 ## Ownership
 
 - semantic owner: the teammate's durable notes and knowledge surface
-- hot state: local runtime state, automation state, and ephemeral execution data
+- hot state: local runtime state, automation state, and ephemeral execution data, persisted locally under `.runtime`
 - ingress: replaceable adapter layer, not architectural owner
 - execution: local model runtime plus optional helper tools
+
+## Closed Loop
+
+The starter now has a minimal closed loop for generated tool surfaces:
+
+- n8n receives the webhook and stays the deterministic orchestration boundary
+- the local control plane performs file writes, durable state updates, and external command hooks
+- `tool.generate` updates the generated tool surface file, regenerates workflow JSON, validates the artifacts, optionally calls an OpenJarvis evaluation command, and attempts to import the result back into local n8n
+- generated tools start as generic handoff branches so the surface is callable immediately even before a dedicated implementation exists
 
 ## Local-First Stance
 
@@ -52,3 +62,5 @@ If Chat SDK becomes the main ingress layer later, this repository should absorb 
 - optional shared MCP extensions
 
 That is why the ingress is deliberately thin and the optional helper lanes stay outside the semantic core.
+
+If long-term memory eventually needs a richer migration target than the current file ledger, Hermes Claw is a plausible next step, but it should stay optional until the team explicitly wants that tradeoff.

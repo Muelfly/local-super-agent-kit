@@ -1,5 +1,6 @@
 #!/usr/bin/env node
-import { defaultRootDir, formatDoctorReport, formatOptionalLaneReport, runApplyProfile, runBootstrap, runChatSdkSummary, runDoctor, runGenerateToolSurface, runStartN8n, runStartOpenJarvis, runStartOptionalLanes } from './lib/bootstrap.js';
+import { defaultRootDir, formatDoctorReport, formatOptionalLaneReport, runApplyProfile, runBootstrap, runChatSdkSummary, runDoctor, runGenerateToolSurface, runStartControlPlane, runStartN8n, runStartOpenJarvis, runStartOptionalLanes } from './lib/bootstrap.js';
+import { serveControlPlane } from './lib/controlPlane.js';
 import { loadRuntimeConfig, type ProfileName } from './lib/env.js';
 
 const args = process.argv.slice(2);
@@ -30,7 +31,7 @@ const main = async (): Promise<void> => {
       const profile = isProfileName(profileArg) ? profileArg : fail(`Unknown profile: ${profileArg}`);
       const report = await runBootstrap(rootDir, profile);
       console.log(formatDoctorReport(report));
-      if (!report.statuses.lmstudio.ok || !report.statuses.n8n.ok) {
+      if (!report.statuses.lmstudio.ok || !report.statuses.n8n.ok || !report.statuses.controlplane.ok) {
         process.exitCode = 1;
       }
       return;
@@ -63,6 +64,26 @@ const main = async (): Promise<void> => {
       return;
     }
 
+    case 'start-control-plane': {
+      const status = await runStartControlPlane(rootDir);
+      console.log(`control-plane: ${status.detail}`);
+      if (!status.ok) {
+        process.exitCode = 1;
+      }
+      return;
+    }
+
+    case 'serve-control-plane': {
+      const config = await loadRuntimeConfig(rootDir);
+      const server = await serveControlPlane(config);
+      console.log(`control-plane listening on ${config.controlPlaneBaseUrl}`);
+      await new Promise<void>((resolve, reject) => {
+        server.once('close', () => resolve());
+        server.once('error', reject);
+      });
+      return;
+    }
+
     case 'start-openjarvis': {
       const status = await runStartOpenJarvis(rootDir);
       console.log(`openjarvis: ${status.detail}`);
@@ -91,7 +112,7 @@ const main = async (): Promise<void> => {
       const config = await loadRuntimeConfig(rootDir);
       const report = await runDoctor(config);
       console.log(formatDoctorReport(report));
-      if (!report.statuses.lmstudio.ok || !report.statuses.n8n.ok) {
+      if (!report.statuses.lmstudio.ok || !report.statuses.n8n.ok || !report.statuses.controlplane.ok) {
         process.exitCode = 1;
       }
       return;

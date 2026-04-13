@@ -1,13 +1,15 @@
 import path from 'node:path';
 import { applyProfile, loadRuntimeConfig, type ProfileName, type RuntimeConfig } from './env.js';
 import { buildChatSdkSummary, checkChatSdk } from './chatSdk.js';
+import { promoteWorkflowBundleToN8n } from './controlPlane.js';
 import { ensureLmStudio, type ServiceStatus } from './lmStudio.js';
-import { checkN8n, checkOpenJarvis, ensureN8n, ensureNemoClaw, ensureOpenJarvis } from './services.js';
-import { generateToolSurface } from './workflows.js';
+import { checkControlPlane, checkN8n, checkOpenJarvis, ensureControlPlane, ensureN8n, ensureNemoClaw, ensureOpenJarvis } from './services.js';
+import { generateToolSurface, readMergedToolSurface } from './workflows.js';
 
 export type DoctorReport = {
   profile: string;
   generatedWorkflows: number;
+  promotedWorkflows: number;
   statuses: Record<string, ServiceStatus>;
 };
 
@@ -20,18 +22,26 @@ export const formatDoctorReport = (report: DoctorReport): string => {
   return [
     `profile: ${report.profile}`,
     `generated workflows: ${report.generatedWorkflows}`,
+    `promoted workflows: ${report.promotedWorkflows}`,
     serviceLine('lmstudio', report.statuses.lmstudio),
     serviceLine('n8n', report.statuses.n8n),
+    serviceLine('control-plane', report.statuses.controlplane),
     serviceLine('openjarvis', report.statuses.openjarvis),
     serviceLine('nemoclaw', report.statuses.nemoclaw),
     serviceLine('chat-sdk', report.statuses.chatsdk),
   ].join('\n');
 };
 
-export const runDoctor = async (config: RuntimeConfig, generatedWorkflows = 0): Promise<DoctorReport> => {
-  const [lmstudio, n8n, openjarvis, nemoclaw, chatsdk] = await Promise.all([
+export const runDoctor = async (
+  config: RuntimeConfig,
+  generatedWorkflows = 0,
+  promotedWorkflows = 0,
+): Promise<DoctorReport> => {
+  const surface = await readMergedToolSurface(config);
+  const [lmstudio, n8n, controlplane, openjarvis, nemoclaw, chatsdk] = await Promise.all([
     ensureLmStudio(config),
     checkN8n(config),
+    checkControlPlane(config),
     checkOpenJarvis(config),
     ensureNemoClaw(config),
     checkChatSdk(config),
@@ -39,8 +49,9 @@ export const runDoctor = async (config: RuntimeConfig, generatedWorkflows = 0): 
 
   return {
     profile: config.lmStudioProfile,
-    generatedWorkflows,
-    statuses: { lmstudio, n8n, openjarvis, nemoclaw, chatsdk },
+    generatedWorkflows: generatedWorkflows || surface.tools.length,
+    promotedWorkflows,
+    statuses: { lmstudio, n8n, controlplane, openjarvis, nemoclaw, chatsdk },
   };
 };
 
@@ -48,18 +59,22 @@ export const runBootstrap = async (rootDir: string, profile: ProfileName): Promi
   await applyProfile(rootDir, profile);
   const config = await loadRuntimeConfig(rootDir);
   const generated = await generateToolSurface(config);
-  const [lmstudio, n8n, openjarvis, nemoclaw, chatsdk] = await Promise.all([
+  const [lmstudio, n8n, controlplane, openjarvis, nemoclaw, chatsdk] = await Promise.all([
     ensureLmStudio(config),
     ensureN8n(config),
+    ensureControlPlane(config),
     ensureOpenJarvis(config),
     ensureNemoClaw(config),
     checkChatSdk(config),
   ]);
+  const promotionReports = n8n.ok ? await promoteWorkflowBundleToN8n(config, generated) : [];
+  const promotedWorkflows = promotionReports.filter((report) => report.status === 'imported').length;
 
   return {
     profile: config.lmStudioProfile,
     generatedWorkflows: generated.length,
-    statuses: { lmstudio, n8n, openjarvis, nemoclaw, chatsdk },
+    promotedWorkflows,
+    statuses: { lmstudio, n8n, controlplane, openjarvis, nemoclaw, chatsdk },
   };
 };
 
@@ -75,6 +90,11 @@ export const runGenerateToolSurface = async (rootDir: string): Promise<string[]>
 export const runStartOpenJarvis = async (rootDir: string): Promise<ServiceStatus> => {
   const config = await loadRuntimeConfig(rootDir);
   return ensureOpenJarvis(config);
+};
+
+export const runStartControlPlane = async (rootDir: string): Promise<ServiceStatus> => {
+  const config = await loadRuntimeConfig(rootDir);
+  return ensureControlPlane(config);
 };
 
 export const runStartOptionalLanes = async (rootDir: string): Promise<Record<string, ServiceStatus>> => {

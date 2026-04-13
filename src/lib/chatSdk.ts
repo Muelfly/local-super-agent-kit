@@ -35,7 +35,7 @@ export const checkChatSdk = async (config: RuntimeConfig): Promise<ServiceStatus
 
   return {
     ok: true,
-    detail: `skeleton ready (${adapters.join(', ')}). Wire src/chat-sdk/bot.ts into your framework and fill adapter credentials locally.`,
+    detail: `skeleton ready (${adapters.join(', ')}). Durable ledger: ${config.chatSdkLedgerDir}. Wire src/chat-sdk/bot.ts into your framework and fill adapter credentials locally.`,
   };
 };
 
@@ -47,6 +47,7 @@ export const buildChatSdkSummary = (config: RuntimeConfig): string[] => {
     `chat-sdk adapters: ${adapters.length > 0 ? adapters.join(', ') : 'none'}`,
     'chat-sdk entrypoint: src/chat-sdk/bot.ts',
     'chat-sdk state adapter: @chat-adapter/state-memory',
+    `chat-sdk durable ledger: ${config.chatSdkLedgerDir}`,
     'next step: mount bot.webhooks.<adapter> inside your HTTP framework routes and connect handlers to local automation.',
   ];
 };

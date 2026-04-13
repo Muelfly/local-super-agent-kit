@@ -23,6 +23,13 @@
       "problemMatcher": []
     },
     {
+      "label": "Start Control Plane",
+      "type": "shell",
+      "command": "npm",
+      "args": ["run", "start:control-plane"],
+      "problemMatcher": []
+    },
+    {
       "label": "Start OpenJarvis",
       "type": "shell",
       "command": "npm",

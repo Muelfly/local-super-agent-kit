@@ -9,6 +9,7 @@ That means the operator habits matter:
 - keep the default path local-first
 - keep optional lanes optional
 - keep ingress thin
+- keep the control-plane loop observable
 - keep credentials local-only
 - record repeated friction where the next teammate will actually read it
 
@@ -29,6 +30,7 @@ Anything beyond that should be treated as an optional lane unless you are delibe
 Core:
 
 - LM Studio local server
+- local control plane
 - n8n local automation surface
 - VS Code tasks and local scripts
 - generated tool-surface workflows
@@ -49,6 +51,7 @@ Prefer this split:
 
 - ingress handler receives event
 - handler routes into local automation or agent runtime
+- local control plane owns file writes, durable ledgers, tool generation, and promotion hooks
 - n8n owns durable orchestration
 - LM Studio owns default inference
 - OpenJarvis and NemoClaw stay helper lanes
@@ -91,6 +94,28 @@ If `NEMOCLAW_SETUP_COMMAND` is blank, the starter will only report NemoClaw stat
 ### Chat SDK State
 
 The starter uses `@chat-adapter/state-memory` on purpose. Do not force Redis into the first-run path unless you are intentionally making the public starter heavier.
+
+The companion file ledger under `.runtime/chat-sdk` is the intended middle ground: better restart resilience without making the starter depend on external state infra.
+
+### Generated Tool Promotion
+
+`tool.generate` now has a real local loop:
+
+- candidate tool definition lands in `generated/tool-surface.generated.json`
+- workflow JSON is regenerated under `generated/n8n`
+- structural validation runs before promotion
+- `OPENJARVIS_EVAL_COMMAND` can act as an operator-defined evaluation gate
+- the resulting workflow is imported back into local n8n as an inactive review surface when the default docker path is available
+
+If you need a non-docker promotion path, override `N8N_PROMOTE_COMMAND` locally.
+
+### Hermes Migration Note
+
+If this starter later needs a richer long-term-memory runtime, Hermes Claw is a reasonable migration candidate rather than a first-run dependency.
+
+- the documented migration flow can bring over persona, user profile, long-term memory, daily memory files, skills, provider config, and MCP server config
+- unsupported concepts are archived for manual review instead of being silently discarded
+- use that as an upgrade path only when the team actually wants Hermes-level long-term memory and runtime complexity
 
 ### Secrets
 

@@ -1,8 +1,10 @@
 {
+  "id": "workflow-28458b78f5e1",
+  "versionId": "2e07a600-64a6-729c-7158-86f658b3b712",
   "name": "tool.tool.generate",
   "nodes": [
     {
-      "id": "f218e441-40fd-4409-b494-9c85026f73be",
+      "id": "node-380eef4874c3",
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
@@ -10,7 +12,7 @@
         240,
         300
       ],
-      "webhookId": "aa81a4b9-f419-453b-a1fc-1536273b8904",
+      "webhookId": "1c1f185d-d03c-03f1-fe22-4a18a6d09e7f",
       "parameters": {
         "httpMethod": "POST",
         "path": "agent/tool-generate",
@@ -19,7 +21,7 @@
       }
     },
     {
-      "id": "cdd8f29e-82d7-4992-8172-8df6911fab8b",
+      "id": "node-786d3e9e0618",
       "name": "Stamp Tool",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
@@ -31,22 +33,28 @@
         "assignments": {
           "assignments": [
             {
-              "id": "46399a3b-2fc7-4a22-844a-95cdfc4e15e8",
+              "id": "07b1fb65-8e28-2bb7-6279-895bb1a9e373",
               "name": "tool",
               "value": "tool.generate",
               "type": "string"
             },
             {
-              "id": "1f8e489b-78c7-4833-8871-39601f5d5e75",
+              "id": "5bc8574e-de34-8627-14a6-239fe1aaed50",
               "name": "summary",
-              "value": "Open a branch where n8n can request a newly generated tool surface.",
+              "value": "Generate, validate, and promote a newly generated tool surface.",
               "type": "string"
             },
             {
-              "id": "199d6392-7c0b-47dd-9400-dfd9b492048f",
+              "id": "e299b9db-1b3a-762a-03dc-e33e3081efeb",
               "name": "payload",
-              "value": "={{$json.body}}",
+              "value": "={{$json.body ?? $json}}",
               "type": "object"
+            },
+            {
+              "id": "24d9b07b-f2ac-c496-1665-8b6c2231d411",
+              "name": "receivedAt",
+              "value": "={{$now}}",
+              "type": "string"
             }
           ]
         },
@@ -54,17 +62,36 @@
       }
     },
     {
-      "id": "56f67962-d8a4-44fc-812a-e6c7db514edc",
+      "id": "node-d506ecaf39a8",
+      "name": "Control Plane",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        800,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:4391/api/tool.generate",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{$json.payload}}",
+        "options": {}
+      }
+    },
+    {
+      "id": "node-1ba6b86ef809",
       "name": "Respond",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
       "position": [
-        780,
+        1080,
         300
       ],
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ { ok: true, tool: $json.tool, summary: $json.summary, payload: $json.payload, next: \"Replace this placeholder branch with real automation.\" } }}",
+        "responseBody": "={{$json}}",
         "options": {}
       }
     }
@@ -85,6 +112,17 @@
       "main": [
         [
           {
+            "node": "Control Plane",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Control Plane": {
+      "main": [
+        [
+          {
             "node": "Respond",
             "type": "main",
             "index": 0
@@ -98,16 +136,29 @@
   "staticData": null,
   "meta": {
     "generatedBy": "local-super-agent-kit",
+    "toolName": "tool.generate",
     "inputSchema": [
+      {
+        "name": "name",
+        "type": "string",
+        "required": false,
+        "description": "Optional explicit tool name override"
+      },
+      {
+        "name": "webhookPath",
+        "type": "string",
+        "required": false,
+        "description": "Optional explicit webhook path override"
+      },
       {
         "name": "goal",
         "type": "string",
         "required": true,
         "description": "Desired automation capability"
       }
-    ]
+    ],
+    "controlPlaneBaseUrl": "http://127.0.0.1:4391"
   },
   "active": false,
-  "tags": [],
-  "versionId": "7a0f6e6d-5d88-4da6-8977-1fd9a2077a08"
+  "tags": []
 }

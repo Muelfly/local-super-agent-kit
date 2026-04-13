@@ -3,6 +3,7 @@ dist/
 .env
 .env.local
 .n8n-data/
+.runtime/
 coverage/
 *.log
 .DS_Store

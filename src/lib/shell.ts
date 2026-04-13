@@ -1,5 +1,7 @@
 import { spawn } from 'node:child_process';
 
+type CommandEnvironment = Record<string, string | undefined>;
+
 export type CommandResult = {
   code: number;
   stdout: string;
@@ -10,10 +12,15 @@ export const runCommand = async (
   command: string,
   args: string[],
   cwd: string,
+  environment: CommandEnvironment = {},
 ): Promise<CommandResult> => {
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       cwd,
+      env: {
+        ...process.env,
+        ...environment,
+      },
       shell: false,
       windowsHide: true,
     });
@@ -40,10 +47,14 @@ export const runCommand = async (
   });
 };
 
-export const runShellCommand = async (commandLine: string, cwd: string): Promise<CommandResult> => {
+export const runShellCommand = async (
+  commandLine: string,
+  cwd: string,
+  environment: CommandEnvironment = {},
+): Promise<CommandResult> => {
   const shell = process.platform === 'win32' ? 'cmd.exe' : 'sh';
   const args = process.platform === 'win32' ? ['/d', '/s', '/c', commandLine] : ['-lc', commandLine];
-  return runCommand(shell, args, cwd);
+  return runCommand(shell, args, cwd, environment);
 };
 
 export const commandExists = async (command: string, cwd: string): Promise<boolean> => {

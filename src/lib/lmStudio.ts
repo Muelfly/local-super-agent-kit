@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import path from 'node:path';
 import type { RuntimeConfig } from './env.js';
-import { launchDetached } from './shell.js';
+import { launchDetached, runCommand } from './shell.js';
 
 export type ServiceStatus = {
   ok: boolean;
@@ -40,6 +40,17 @@ const defaultWindowsAppPaths = (): string[] => {
   ];
 };
 
+const defaultLmStudioCliPaths = (): string[] => {
+  if (process.platform !== 'win32') {
+    return ['lms'];
+  }
+
+  const home = process.env.USERPROFILE || '';
+  return [
+    path.join(home, '.lmstudio', 'bin', 'lms.exe'),
+  ];
+};
+
 export const resolveLmStudioAppPath = (config: RuntimeConfig): string | null => {
   const candidates = [config.lmStudioAppPath, ...(process.platform === 'win32' ? defaultWindowsAppPaths() : [])]
     .map((item) => item.trim())
@@ -54,6 +65,30 @@ export const resolveLmStudioAppPath = (config: RuntimeConfig): string | null => 
   return null;
 };
 
+const resolveLmStudioCliPath = (): string | null => {
+  const candidates = defaultLmStudioCliPaths();
+  for (const candidate of candidates) {
+    if (process.platform !== 'win32' || existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return null;
+};
+
+const startLmStudioLocalServer = async (config: RuntimeConfig): Promise<boolean> => {
+  const cliPath = resolveLmStudioCliPath();
+  if (!cliPath) {
+    return false;
+  }
+
+  try {
+    const result = await runCommand(cliPath, ['server', 'start'], config.rootDir);
+    return result.code === 0;
+  } catch {
+    return false;
+  }
+};
+
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 export const ensureLmStudio = async (config: RuntimeConfig): Promise<ServiceStatus> => {
@@ -63,26 +98,43 @@ export const ensureLmStudio = async (config: RuntimeConfig): Promise<ServiceStat
   }
 
   const appPath = resolveLmStudioAppPath(config);
-  if (!appPath) {
-    return {
-      ok: false,
-      detail: 'LM Studio is not reachable and no local app path could be resolved. Set LM_STUDIO_APP_PATH.',
-    };
-  }
-
-  await launchDetached(appPath, [], config.rootDir);
-
   const deadline = Date.now() + config.lmStudioHealthTimeoutMs;
+  let appLaunchAttempted = false;
+  let lastCliAttemptAt = 0;
+
   while (Date.now() < deadline) {
-    await sleep(2_000);
     const current = await checkLmStudio(config);
     if (current.ok) {
       return current;
     }
+
+    const now = Date.now();
+    if (now - lastCliAttemptAt >= 2_000) {
+      lastCliAttemptAt = now;
+      const cliStarted = await startLmStudioLocalServer(config);
+      if (cliStarted) {
+        await sleep(2_000);
+        continue;
+      }
+    }
+
+    if (!appLaunchAttempted && appPath) {
+      await launchDetached(appPath, [], config.rootDir);
+      appLaunchAttempted = true;
+    }
+
+    await sleep(2_000);
+  }
+
+  if (!appPath) {
+    return {
+      ok: false,
+      detail: 'LM Studio is not reachable and no local app path could be resolved. Set LM_STUDIO_APP_PATH or run lms server start.',
+    };
   }
 
   return {
     ok: false,
-    detail: 'LM Studio app launched, but the local server did not become reachable in time.',
+    detail: 'LM Studio app launched, but the local server did not become reachable in time. Try lms server start or enable the local server in LM Studio.',
   };
 };

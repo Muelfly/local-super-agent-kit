@@ -37,10 +37,20 @@
     },
     {
       "name": "tool.generate",
-      "summary": "Open a branch where n8n can request a newly generated tool surface.",
+      "summary": "Generate, validate, and promote a newly generated tool surface.",
       "webhookPath": "agent/tool-generate",
       "responseMode": "responseNode",
       "inputSchema": [
+        {
+          "name": "name",
+          "type": "string",
+          "description": "Optional explicit tool name override"
+        },
+        {
+          "name": "webhookPath",
+          "type": "string",
+          "description": "Optional explicit webhook path override"
+        },
         {
           "name": "goal",
           "type": "string",

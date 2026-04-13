@@ -1,8 +1,10 @@
 {
+  "id": "workflow-780d1163b2e4",
+  "versionId": "4c00c92c-0697-625d-b660-681bbb09a336",
   "name": "tool.web.fetch",
   "nodes": [
     {
-      "id": "b2c15728-cafd-44f9-94f9-ad7b09bd7257",
+      "id": "node-efaa9a798a47",
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
@@ -10,7 +12,7 @@
         240,
         300
       ],
-      "webhookId": "c8c82f30-6206-4e0e-b9ed-cd9d743d902e",
+      "webhookId": "26817204-bd9c-fa6d-e2ec-a7318fe3cf19",
       "parameters": {
         "httpMethod": "POST",
         "path": "agent/web-fetch",
@@ -19,7 +21,7 @@
       }
     },
     {
-      "id": "010900eb-fabb-407d-9767-8a5fe1834a70",
+      "id": "node-d8aea7a84cca",
       "name": "Stamp Tool",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
@@ -31,22 +33,28 @@
         "assignments": {
           "assignments": [
             {
-              "id": "2b0e160a-d823-4967-bac0-843ad8c29d9d",
+              "id": "b3ae1ff0-bf50-ff91-fba0-a25febcf15ca",
               "name": "tool",
               "value": "web.fetch",
               "type": "string"
             },
             {
-              "id": "0da24cdd-ce5c-41f7-a652-7e6f92343b95",
+              "id": "7189d70d-fd49-d914-23a6-ce70b04cb8cc",
               "name": "summary",
               "value": "Fetch a URL through a deterministic webhook lane.",
               "type": "string"
             },
             {
-              "id": "a392ab1d-20e1-4b21-a738-62a6b455e4ca",
+              "id": "193a0c84-448f-d855-fe6f-762bc1749ecd",
               "name": "payload",
-              "value": "={{$json.body}}",
+              "value": "={{$json.body ?? $json}}",
               "type": "object"
+            },
+            {
+              "id": "a4d3197a-96ba-5a0d-eb49-5ba48fae5c4d",
+              "name": "receivedAt",
+              "value": "={{$now}}",
+              "type": "string"
             }
           ]
         },
@@ -54,17 +62,36 @@
       }
     },
     {
-      "id": "21ce876d-3121-4c52-a1dd-de083d0b63c0",
+      "id": "node-25292d33f278",
+      "name": "Control Plane",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        800,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:4391/api/web.fetch",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{$json.payload}}",
+        "options": {}
+      }
+    },
+    {
+      "id": "node-411ea5924297",
       "name": "Respond",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
       "position": [
-        780,
+        1080,
         300
       ],
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ { ok: true, tool: $json.tool, summary: $json.summary, payload: $json.payload, next: \"Replace this placeholder branch with real automation.\" } }}",
+        "responseBody": "={{$json}}",
         "options": {}
       }
     }
@@ -85,6 +112,17 @@
       "main": [
         [
           {
+            "node": "Control Plane",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Control Plane": {
+      "main": [
+        [
+          {
             "node": "Respond",
             "type": "main",
             "index": 0
@@ -98,6 +136,7 @@
   "staticData": null,
   "meta": {
     "generatedBy": "local-super-agent-kit",
+    "toolName": "web.fetch",
     "inputSchema": [
       {
         "name": "url",
@@ -105,9 +144,9 @@
         "required": true,
         "description": "Absolute URL to fetch"
       }
-    ]
+    ],
+    "controlPlaneBaseUrl": "http://127.0.0.1:4391"
   },
   "active": false,
-  "tags": [],
-  "versionId": "cbbb7b2e-d639-45d9-abba-311db161c847"
+  "tags": []
 }

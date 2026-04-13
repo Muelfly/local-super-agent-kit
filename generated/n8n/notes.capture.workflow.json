@@ -1,8 +1,10 @@
 {
+  "id": "workflow-fb97a383f8b2",
+  "versionId": "658012dd-cba7-325c-69a0-9ebe82dc7730",
   "name": "tool.notes.capture",
   "nodes": [
     {
-      "id": "cf02ec98-da89-425c-a445-dcea181de931",
+      "id": "node-2fe6f0750270",
       "name": "Webhook",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2,
@@ -10,7 +12,7 @@
         240,
         300
       ],
-      "webhookId": "5fa97366-3d82-4393-8901-e5f7ef7176b7",
+      "webhookId": "bfb6577a-c5b4-62f5-9e25-ab9d8550b43d",
       "parameters": {
         "httpMethod": "POST",
         "path": "agent/notes-capture",
@@ -19,7 +21,7 @@
       }
     },
     {
-      "id": "5d6198d9-7a22-4799-a746-8bdd54d3eac5",
+      "id": "node-696963a493f3",
       "name": "Stamp Tool",
       "type": "n8n-nodes-base.set",
       "typeVersion": 3.4,
@@ -31,22 +33,28 @@
         "assignments": {
           "assignments": [
             {
-              "id": "70660e4b-36ce-4460-bb26-e4827e2905cf",
+              "id": "658e6e3d-e6b1-040f-8598-88cf2fb8d6e6",
               "name": "tool",
               "value": "notes.capture",
               "type": "string"
             },
             {
-              "id": "5135940c-d637-42a5-b69b-11a5413a81e3",
+              "id": "4b3fa217-8e9d-9399-1759-d5ce11bca715",
               "name": "summary",
               "value": "Capture a durable note request into the local automation lane.",
               "type": "string"
             },
             {
-              "id": "530e18d5-51f0-4a83-a6bd-0fedadf0bc22",
+              "id": "cc23ffd4-45ed-9a09-d9a7-4d2dd00f1ccb",
               "name": "payload",
-              "value": "={{$json.body}}",
+              "value": "={{$json.body ?? $json}}",
               "type": "object"
+            },
+            {
+              "id": "576b8a85-d8d3-f3ea-e531-ae2ee8bf589b",
+              "name": "receivedAt",
+              "value": "={{$now}}",
+              "type": "string"
             }
           ]
         },
@@ -54,17 +62,36 @@
       }
     },
     {
-      "id": "54fd3a7d-a030-4be7-ab59-08dd42514c13",
+      "id": "node-e79a5796c985",
+      "name": "Control Plane",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        800,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "http://127.0.0.1:4391/api/notes.capture",
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{$json.payload}}",
+        "options": {}
+      }
+    },
+    {
+      "id": "node-338d160ed649",
       "name": "Respond",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
       "position": [
-        780,
+        1080,
         300
       ],
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ { ok: true, tool: $json.tool, summary: $json.summary, payload: $json.payload, next: \"Replace this placeholder branch with real automation.\" } }}",
+        "responseBody": "={{$json}}",
         "options": {}
       }
     }
@@ -85,6 +112,17 @@
       "main": [
         [
           {
+            "node": "Control Plane",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Control Plane": {
+      "main": [
+        [
+          {
             "node": "Respond",
             "type": "main",
             "index": 0
@@ -98,6 +136,7 @@
   "staticData": null,
   "meta": {
     "generatedBy": "local-super-agent-kit",
+    "toolName": "notes.capture",
     "inputSchema": [
       {
         "name": "title",
@@ -111,9 +150,9 @@
         "required": true,
         "description": "Markdown content"
       }
-    ]
+    ],
+    "controlPlaneBaseUrl": "http://127.0.0.1:4391"
   },
   "active": false,
-  "tags": [],
-  "versionId": "4ee0b227-7599-4421-8a59-247539494c53"
+  "tags": []
 }

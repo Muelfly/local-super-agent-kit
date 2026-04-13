@@ -3,6 +3,7 @@ import { commandExists, launchDetachedShell, runCommand, runShellCommand } from 
 import type { ServiceStatus } from './lmStudio.js';
 
 const buildModelsUrl = (baseUrl: string): string => `${baseUrl.replace(/\/$/u, '')}/models`;
+const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
 export const checkOpenJarvis = async (config: RuntimeConfig): Promise<ServiceStatus> => {
   if (!config.openJarvisEnabled) {
@@ -18,7 +19,13 @@ export const checkOpenJarvis = async (config: RuntimeConfig): Promise<ServiceSta
     if (!response.ok) {
       return { ok: false, detail: `HTTP ${response.status}` };
     }
-    return { ok: true, detail: 'reachable' };
+    const payload = await response.json() as { data?: Array<{ id?: string }> };
+    const models = Array.isArray(payload.data)
+      ? payload.data.map((item) => String(item.id ?? '').trim()).filter(Boolean)
+      : [];
+    const evalHook = config.openJarvisEvalCommand ? 'eval hook configured' : 'eval hook not configured';
+    const modelDetail = models.length > 0 ? `models: ${models.join(', ')}` : 'no models listed';
+    return { ok: true, detail: `${modelDetail}; ${evalHook}` };
   } catch (error) {
     return { ok: false, detail: error instanceof Error ? error.message : 'OpenJarvis unreachable' };
   }
@@ -58,6 +65,45 @@ export const ensureN8n = async (config: RuntimeConfig): Promise<ServiceStatus> =
 
   await runShellCommand(config.n8nStartCommand, config.rootDir);
   return checkN8n(config);
+};
+
+export const checkControlPlane = async (config: RuntimeConfig): Promise<ServiceStatus> => {
+  if (!config.controlPlaneEnabled) {
+    return { ok: true, detail: 'disabled' };
+  }
+
+  try {
+    const response = await fetch(`${config.controlPlaneBaseUrl.replace(/\/$/u, '')}/healthz`);
+    if (!response.ok) {
+      return { ok: false, detail: `HTTP ${response.status}` };
+    }
+    return { ok: true, detail: 'reachable' };
+  } catch (error) {
+    return { ok: false, detail: error instanceof Error ? error.message : 'control plane unreachable' };
+  }
+};
+
+export const ensureControlPlane = async (config: RuntimeConfig): Promise<ServiceStatus> => {
+  const initial = await checkControlPlane(config);
+  if (initial.ok || !config.controlPlaneEnabled) {
+    return initial;
+  }
+
+  await launchDetachedShell(config.controlPlaneStartCommand, config.rootDir);
+  let ready = false;
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const current = await checkControlPlane(config);
+    if (current.ok) {
+      ready = true;
+      break;
+    }
+    await sleep(500);
+  }
+  if (!ready) {
+    return { ok: false, detail: 'control plane launch was attempted, but health checks did not pass in time' };
+  }
+
+  return checkControlPlane(config);
 };
 
 export const checkNemoClaw = async (config: RuntimeConfig): Promise<ServiceStatus> => {

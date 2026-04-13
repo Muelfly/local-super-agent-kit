@@ -33,11 +33,21 @@ export type RuntimeConfig = {
   n8nBaseUrl: string;
   n8nStartCommand: string;
   n8nToolSurfaceFile: string;
+  n8nGeneratedSurfaceFile: string;
+  n8nPromoteCommand: string;
+  controlPlaneEnabled: boolean;
+  controlPlaneHost: string;
+  controlPlanePort: number;
+  controlPlaneBaseUrl: string;
+  controlPlaneStartCommand: string;
+  runtimeStateDir: string;
   chatSdkEnabled: boolean;
   chatSdkAdapters: string[];
   chatSdkUserName: string;
+  chatSdkLedgerDir: string;
   sharedMcpEnabled: boolean;
   sharedMcpUrl: string;
+  openJarvisEvalCommand: string;
 };
 
 const parseBoolean = (value: string | undefined, fallback: boolean): boolean => {
@@ -131,6 +141,10 @@ const mergedEnv = async (rootDir: string): Promise<Map<string, string>> => {
 export const loadRuntimeConfig = async (rootDir: string): Promise<RuntimeConfig> => {
   const env = await mergedEnv(rootDir);
   const get = (key: string, fallback = ''): string => env.get(key) ?? fallback;
+  const runtimeStateDir = get('RUNTIME_STATE_DIR', '.runtime');
+  const controlPlaneHost = get('CONTROL_PLANE_HOST', '127.0.0.1');
+  const controlPlanePort = parseInteger(get('CONTROL_PLANE_PORT'), 4391);
+  const controlPlaneBaseUrl = get('CONTROL_PLANE_BASE_URL', `http://${controlPlaneHost}:${controlPlanePort}`);
 
   return {
     rootDir,
@@ -156,10 +170,20 @@ export const loadRuntimeConfig = async (rootDir: string): Promise<RuntimeConfig>
     n8nBaseUrl: get('N8N_BASE_URL', 'http://127.0.0.1:5678'),
     n8nStartCommand: get('N8N_START_COMMAND', 'docker compose -f compose.local.yml up -d n8n'),
     n8nToolSurfaceFile: get('N8N_TOOL_SURFACE_FILE', 'config/tools/default-surface.json'),
+    n8nGeneratedSurfaceFile: get('N8N_GENERATED_SURFACE_FILE', 'generated/tool-surface.generated.json'),
+    n8nPromoteCommand: get('N8N_PROMOTE_COMMAND'),
+    controlPlaneEnabled: parseBoolean(get('CONTROL_PLANE_ENABLED'), true),
+    controlPlaneHost,
+    controlPlanePort,
+    controlPlaneBaseUrl,
+    controlPlaneStartCommand: get('CONTROL_PLANE_START_COMMAND', 'node --import tsx src/cli.ts serve-control-plane'),
+    runtimeStateDir,
     chatSdkEnabled: parseBoolean(get('CHAT_SDK_ENABLED'), false),
     chatSdkAdapters: get('CHAT_SDK_ADAPTERS', 'discord,github').split(',').map((item) => item.trim()).filter(Boolean),
     chatSdkUserName: get('CHAT_SDK_USER_NAME', 'local-super-agent'),
+    chatSdkLedgerDir: get('CHAT_SDK_LEDGER_DIR', path.join(runtimeStateDir, 'chat-sdk')),
     sharedMcpEnabled: parseBoolean(get('SHARED_MCP_ENABLED'), false),
     sharedMcpUrl: get('SHARED_MCP_URL'),
+    openJarvisEvalCommand: get('OPENJARVIS_EVAL_COMMAND'),
   };
 };

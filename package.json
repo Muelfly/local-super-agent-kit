@@ -12,6 +12,7 @@
     "bootstrap:3060ti": "tsx src/cli.ts bootstrap --profile 3060ti-30b",
     "apply-profile": "tsx src/cli.ts apply-profile",
     "doctor": "tsx src/cli.ts doctor",
+    "start:control-plane": "tsx src/cli.ts start-control-plane",
     "start:openjarvis": "tsx src/cli.ts start-openjarvis",
     "start:optional-lanes": "tsx src/cli.ts start-optional-lanes",
     "chat-sdk:summary": "tsx src/cli.ts chat-sdk-summary",
