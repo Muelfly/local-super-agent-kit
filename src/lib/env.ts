@@ -32,6 +32,9 @@ export type RuntimeConfig = {
   openClawBaseUrl: string;
   openClawApiKey: string;
   openClawModel: string;
+  openClawStateDir: string;
+  openClawConfigPath: string;
+  openClawWorkspaceDir: string;
   openClawStatusArgs: string[];
   openClawInstallCommand: string;
   openClawStartCommand: string;
@@ -50,6 +53,7 @@ export type RuntimeConfig = {
   hermesModelHint: string;
   nvidiaApiKey: string;
   n8nEnabled: boolean;
+  n8nHostPort: number;
   n8nBaseUrl: string;
   n8nStartCommand: string;
   n8nToolSurfaceFile: string;
@@ -298,6 +302,11 @@ export const loadRuntimeConfig = async (rootDir: string): Promise<RuntimeConfig>
   const openJarvisBaseUrl = get('OPENJARVIS_BASE_URL', 'http://127.0.0.1:8000/v1');
   const openJarvisModelHint = get('OPENJARVIS_MODEL_HINT', lmStudioModelHint);
   const openClawCommand = get('OPENCLAW_COMMAND', defaultOpenClawCommand());
+  const openClawBaseUrl = get('OPENCLAW_BASE_URL', 'http://127.0.0.1:18789/v1');
+  const openClawBinding = parseServiceBinding(openClawBaseUrl, 18789);
+  const openClawStateDir = get('OPENCLAW_STATE_DIR', path.join(rootDir, runtimeStateDir, 'openclaw'));
+  const openClawConfigPath = get('OPENCLAW_CONFIG_PATH', path.join(openClawStateDir, 'openclaw.json'));
+  const openClawWorkspaceDir = get('OPENCLAW_WORKSPACE_DIR', rootDir);
   const nemoClawCommand = get('NEMOCLAW_COMMAND', defaultNemoClawCommand(rootDir));
   const nemoClawProvider = get('NEMOCLAW_PROVIDER', 'ollama');
   const nemoClawModel = get('NEMOCLAW_MODEL', 'qwen2.5:7b');
@@ -327,12 +336,15 @@ export const loadRuntimeConfig = async (rootDir: string): Promise<RuntimeConfig>
     openJarvisModelHint,
     openClawEnabled: parseBoolean(get('OPENCLAW_ENABLED'), true),
     openClawCommand,
-    openClawBaseUrl: get('OPENCLAW_BASE_URL', 'http://127.0.0.1:18789/v1'),
+    openClawBaseUrl,
     openClawApiKey: get('OPENCLAW_API_KEY'),
-    openClawModel: get('OPENCLAW_MODEL'),
+    openClawModel: get('OPENCLAW_MODEL', lmStudioModelHint),
+    openClawStateDir,
+    openClawConfigPath,
+    openClawWorkspaceDir,
     openClawStatusArgs: get('OPENCLAW_STATUS_ARGS', 'gateway status').split(' ').map((item) => item.trim()).filter(Boolean),
     openClawInstallCommand: get('OPENCLAW_INSTALL_COMMAND', 'npm install -g openclaw@latest'),
-    openClawStartCommand: get('OPENCLAW_START_COMMAND', `${quoteShellValue(openClawCommand)} gateway run --allow-unconfigured --bind loopback --auth none --port 18789 --force --verbose`),
+    openClawStartCommand: get('OPENCLAW_START_COMMAND', `${quoteShellValue(openClawCommand)} gateway run --allow-unconfigured --bind loopback --auth none --port ${openClawBinding.port} --force --verbose`),
     nemoClawEnabled: parseBoolean(get('NEMOCLAW_ENABLED'), true),
     nemoClawCommand,
     nemoClawStatusArgs: get('NEMOCLAW_STATUS_ARGS', 'status').split(' ').map((item) => item.trim()).filter(Boolean),
@@ -348,7 +360,8 @@ export const loadRuntimeConfig = async (rootDir: string): Promise<RuntimeConfig>
     hermesModelHint: get('HERMES_MODEL_HINT'),
     nvidiaApiKey: get('NVIDIA_API_KEY'),
     n8nEnabled: parseBoolean(get('N8N_ENABLED'), true),
-    n8nBaseUrl: get('N8N_BASE_URL', 'http://127.0.0.1:5678'),
+    n8nHostPort: parseInteger(get('N8N_HOST_PORT'), 5679),
+    n8nBaseUrl: get('N8N_BASE_URL', `http://127.0.0.1:${parseInteger(get('N8N_HOST_PORT'), 5679)}`),
     n8nStartCommand: get('N8N_START_COMMAND', 'docker compose -f compose.local.yml up -d n8n'),
     n8nToolSurfaceFile: get('N8N_TOOL_SURFACE_FILE', 'config/tools/default-surface.json'),
     n8nGeneratedSurfaceFile: get('N8N_GENERATED_SURFACE_FILE', 'generated/tool-surface.generated.json'),

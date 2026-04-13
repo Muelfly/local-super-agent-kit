@@ -20,7 +20,7 @@ Optional:
 Packaged by default:
 
 - OpenJarvis runtime via the repo-managed launcher
-- OpenClaw CLI and local gateway runtime
+- OpenClaw CLI and local gateway/control runtime
 - Hermes Agent runtime
 - NemoClaw sandbox/runtime tail
 
@@ -36,6 +36,8 @@ Packaged by default:
 5. Confirm `Doctor` shows LM Studio, OpenJarvis, OpenClaw, Hermes, NemoClaw, and n8n as reachable.
 6. Confirm the control plane is reachable too. `Doctor` now checks it explicitly.
 7. If any packaged chain runtime needs a retry after bootstrap, run `Start Super-Agent Lanes`.
+
+For OpenClaw specifically, read a green status as gateway or control reachability unless the detail explicitly says the chat lane itself was validated.
 
 ## What Bootstrap Does
 
@@ -61,15 +63,30 @@ Fresh LM Studio installs on Windows can have the desktop app present while the l
 
 The packaged UX should assume teammates talk to LM Studio Chat first. OpenJarvis, OpenClaw, Hermes, and NemoClaw belong behind that surface as built-in runtimes rather than as separate first-run consoles.
 
+## OpenClaw Chat Lane Reality Check
+
+The current packaged OpenClaw path can look healthier than it really is.
+
+- repo bootstrap now provisions repo-local OpenClaw state under `.runtime/openclaw`
+- that repo-local state binds a custom `lmstudio` provider to the loaded LM Studio chat model before the gateway is treated as ready
+- doctor now fails when LM Studio has no chat model loaded or only embedding models loaded, because that still breaks the OpenClaw handoff in practice
+
+The package no longer depends on user-home OpenClaw auth for the default LM Studio path.
+
+- `.runtime/openclaw/openclaw.json` is now the package-local source of truth for the default OpenClaw LM Studio binding
+- `OPENCLAW_MODEL` is now the package target that gets matched against the loaded LM Studio chat model id
+- if doctor still fails, the first thing to inspect is usually LM Studio model load state, not `~/.openclaw/agents/main/agent/auth-profiles.json`
+
 The repo-managed n8n auth state is written to `.runtime/n8n/auth.json`, which stays local and ignored by Git. That lets LM Studio Chat inspect workflows without sending teammates through manual owner setup and API-key creation in the n8n UI.
 
 ## External n8n Override
 
-If another n8n instance is already bound to port `5678`, the package should not try to claim it as the repo-managed service.
+The repo-managed n8n lane now defaults to host port `5679`, so it can sit next to a separate default n8n on `5678` without colliding.
 
-Set these in `.env.local` when you intentionally want to point at that external instance:
+If you want the package to target some other existing n8n instance instead of the repo-managed one, set these in `.env.local`:
 
 - `N8N_MANAGED_BY_REPO=false`
+- `N8N_BASE_URL=<existing instance base URL>`
 - `N8N_API_KEY=<existing public API key>`
 
 Without that override, the package assumes the repo Docker Compose service is the source of truth for hidden automation.

@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import { chmod, mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { RuntimeConfig } from './env.js';
@@ -8,6 +9,22 @@ import { ensureN8nAutomationAccess, getN8nAccessStatus, waitForN8nReachable } fr
 const buildModelsUrl = (baseUrl: string): string => `${baseUrl.replace(/\/$/u, '')}/models`;
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 const deriveRootUrl = (baseUrl: string): string => baseUrl.replace(/\/$/u, '').replace(/\/v1$/u, '');
+const OPENCLAW_LMSTUDIO_PROVIDER = 'lmstudio';
+const OPENCLAW_LMSTUDIO_API_KEY = 'lmstudio-local';
+
+type OpenClawModelsStatus = {
+  defaultModel?: string;
+  resolvedDefault?: string;
+  auth?: {
+    missingProvidersInUse?: string[];
+  };
+};
+
+type OpenClawModelResolution = {
+  ok: boolean;
+  detail: string;
+  modelId?: string;
+};
 
 const waitForService = async (check: () => Promise<ServiceStatus>, attempts = 20, delayMs = 500): Promise<ServiceStatus> => {
   let last = await check();
@@ -24,6 +41,220 @@ const waitForService = async (check: () => Promise<ServiceStatus>, attempts = 20
   }
 
   return last;
+};
+
+const buildOpenClawEnvironment = (config: RuntimeConfig): Record<string, string> => ({
+  OPENCLAW_STATE_DIR: config.openClawStateDir,
+  OPENCLAW_CONFIG_PATH: config.openClawConfigPath,
+});
+
+const normalizeModelToken = (value: string): string => value.toLowerCase().replace(/[^a-z0-9]+/gu, '');
+
+const isLikelyEmbeddingModel = (modelId: string): boolean => /embed|embedding/u.test(modelId.toLowerCase());
+
+const parseGatewayPort = (baseUrl: string, fallback = 18789): number => {
+  try {
+    const parsed = new URL(baseUrl);
+    const port = Number(parsed.port);
+    return Number.isFinite(port) && port > 0 ? port : fallback;
+  } catch {
+    return fallback;
+  }
+};
+
+const listLmStudioModels = async (config: RuntimeConfig): Promise<string[]> => {
+  const response = await fetch(buildModelsUrl(config.lmStudioBaseUrl));
+  if (!response.ok) {
+    throw new Error(`LM Studio HTTP ${response.status}`);
+  }
+
+  const payload = await response.json() as { data?: Array<{ id?: string }> };
+  return Array.isArray(payload.data)
+    ? payload.data.map((item) => String(item.id ?? '').trim()).filter(Boolean)
+    : [];
+};
+
+const resolveOpenClawModelFromLmStudio = async (config: RuntimeConfig): Promise<OpenClawModelResolution> => {
+  let models: string[] = [];
+
+  try {
+    models = await listLmStudioModels(config);
+  } catch (error) {
+    return {
+      ok: false,
+      detail: error instanceof Error ? error.message : 'LM Studio model discovery failed',
+    };
+  }
+
+  if (models.length === 0) {
+    return {
+      ok: false,
+      detail: 'LM Studio is reachable, but no model is loaded. Load a chat model before starting the packaged OpenClaw lane.',
+    };
+  }
+
+  const chatModels = models.filter((model) => !isLikelyEmbeddingModel(model));
+  if (chatModels.length === 0) {
+    return {
+      ok: false,
+      detail: `LM Studio only reports embedding-style models right now: ${models.join(', ')}`,
+    };
+  }
+
+  const configuredCandidates = [config.openClawModel, config.lmStudioModelHint, ...config.lmStudioModelCandidates]
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const uniqueCandidates = [...new Set(configuredCandidates)];
+
+  for (const candidate of uniqueCandidates) {
+    const exactMatch = chatModels.find((model) => model.toLowerCase() === candidate.toLowerCase());
+    if (exactMatch) {
+      return { ok: true, detail: `matched configured LM Studio model ${candidate}`, modelId: exactMatch };
+    }
+
+    const normalizedCandidate = normalizeModelToken(candidate);
+    if (!normalizedCandidate) {
+      continue;
+    }
+
+    const fuzzyMatch = chatModels.find((model) => normalizeModelToken(model).includes(normalizedCandidate));
+    if (fuzzyMatch) {
+      return { ok: true, detail: `matched configured LM Studio hint ${candidate}`, modelId: fuzzyMatch };
+    }
+  }
+
+  if (chatModels.length === 1) {
+    return {
+      ok: true,
+      detail: `using the only loaded LM Studio chat model ${chatModels[0]}`,
+      modelId: chatModels[0],
+    };
+  }
+
+  return {
+    ok: false,
+    detail: `Loaded LM Studio chat models did not match the packaged OpenClaw target. Loaded: ${chatModels.join(', ')}. Candidates: ${uniqueCandidates.join(', ') || 'none'}`,
+  };
+};
+
+const readOpenClawModelsStatus = async (config: RuntimeConfig): Promise<{ ok: boolean; detail: string; status?: OpenClawModelsStatus }> => {
+  const result = await runCommand(
+    config.openClawCommand,
+    ['models', 'status', '--json'],
+    config.rootDir,
+    buildOpenClawEnvironment(config),
+  );
+
+  if (result.code !== 0) {
+    return {
+      ok: false,
+      detail: result.stderr || result.stdout || 'openclaw models status failed',
+    };
+  }
+
+  try {
+    return {
+      ok: true,
+      detail: 'ok',
+      status: JSON.parse(result.stdout) as OpenClawModelsStatus,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      detail: error instanceof Error ? error.message : 'could not parse OpenClaw model status',
+    };
+  }
+};
+
+const validateOpenClawLmStudioBinding = async (config: RuntimeConfig, expectedModelId: string): Promise<ServiceStatus> => {
+  if (!existsSync(config.openClawConfigPath)) {
+    return {
+      ok: false,
+      detail: `repo-local OpenClaw config is missing at ${config.openClawConfigPath}; rerun bootstrap to bind LM Studio`,
+    };
+  }
+
+  const statusResult = await readOpenClawModelsStatus(config);
+  if (!statusResult.ok || !statusResult.status) {
+    return { ok: false, detail: statusResult.detail };
+  }
+
+  const expected = `${OPENCLAW_LMSTUDIO_PROVIDER}/${expectedModelId}`;
+  const resolved = statusResult.status.resolvedDefault?.trim() || statusResult.status.defaultModel?.trim() || '';
+  if (resolved !== expected) {
+    return {
+      ok: false,
+      detail: `repo-local OpenClaw binding mismatch: expected ${expected}, got ${resolved || 'unset'}`,
+    };
+  }
+
+  const missingProviders = statusResult.status.auth?.missingProvidersInUse ?? [];
+  if (missingProviders.includes(OPENCLAW_LMSTUDIO_PROVIDER)) {
+    return {
+      ok: false,
+      detail: 'repo-local OpenClaw binding still reports missing LM Studio provider auth',
+    };
+  }
+
+  return {
+    ok: true,
+    detail: `repo-local LM Studio binding ready: ${expected}`,
+  };
+};
+
+const ensureOpenClawLmStudioBinding = async (config: RuntimeConfig): Promise<ServiceStatus> => {
+  const resolution = await resolveOpenClawModelFromLmStudio(config);
+  if (!resolution.ok || !resolution.modelId) {
+    return { ok: false, detail: resolution.detail };
+  }
+
+  await mkdir(config.openClawStateDir, { recursive: true });
+  const onboarding = await runCommand(
+    config.openClawCommand,
+    [
+      'onboard',
+      '--non-interactive',
+      '--accept-risk',
+      '--mode',
+      'local',
+      '--auth-choice',
+      'custom-api-key',
+      '--custom-provider-id',
+      OPENCLAW_LMSTUDIO_PROVIDER,
+      '--custom-base-url',
+      config.lmStudioBaseUrl,
+      '--custom-compatibility',
+      'openai',
+      '--custom-model-id',
+      resolution.modelId,
+      '--custom-api-key',
+      OPENCLAW_LMSTUDIO_API_KEY,
+      '--workspace',
+      config.openClawWorkspaceDir,
+      '--gateway-bind',
+      'loopback',
+      '--gateway-port',
+      String(parseGatewayPort(config.openClawBaseUrl)),
+      '--skip-channels',
+      '--skip-skills',
+      '--skip-search',
+      '--skip-ui',
+      '--skip-health',
+      '--no-install-daemon',
+      '--json',
+    ],
+    config.rootDir,
+    buildOpenClawEnvironment(config),
+  );
+
+  if (onboarding.code !== 0) {
+    return {
+      ok: false,
+      detail: onboarding.stderr || onboarding.stdout || 'OpenClaw LM Studio onboarding failed',
+    };
+  }
+
+  return validateOpenClawLmStudioBinding(config, resolution.modelId);
 };
 
 const installBinary = async (commandLine: string, cwd: string): Promise<ServiceStatus> => {
@@ -267,6 +498,16 @@ export const checkOpenClaw = async (config: RuntimeConfig): Promise<ServiceStatu
     return { ok: false, detail: 'enabled, but OPENCLAW_BASE_URL is not configured' };
   }
 
+  const resolution = await resolveOpenClawModelFromLmStudio(config);
+  if (!resolution.ok || !resolution.modelId) {
+    return { ok: false, detail: resolution.detail };
+  }
+
+  const binding = await validateOpenClawLmStudioBinding(config, resolution.modelId);
+  if (!binding.ok) {
+    return binding;
+  }
+
   try {
     const response = await fetch(`${deriveRootUrl(config.openClawBaseUrl)}/healthz`, {
       headers: config.openClawApiKey
@@ -276,7 +517,10 @@ export const checkOpenClaw = async (config: RuntimeConfig): Promise<ServiceStatu
     if (!response.ok) {
       return { ok: false, detail: `HTTP ${response.status}` };
     }
-    return { ok: true, detail: `reachable; model hint: ${config.openClawModel || 'not set'}` };
+    return {
+      ok: true,
+      detail: `gateway/control reachable; ${binding.detail}; LM Studio target: ${resolution.modelId}`,
+    };
   } catch (error) {
     return { ok: false, detail: error instanceof Error ? error.message : 'OpenClaw unreachable' };
   }
@@ -288,12 +532,17 @@ export const ensureOpenClaw = async (config: RuntimeConfig): Promise<ServiceStat
     return install;
   }
 
+  const binding = await ensureOpenClawLmStudioBinding(config);
+  if (!binding.ok) {
+    return binding;
+  }
+
   const initial = await checkOpenClaw(config);
   if (initial.ok || !config.openClawEnabled || !config.openClawStartCommand) {
     return initial;
   }
 
-  await launchDetachedShell(config.openClawStartCommand, config.rootDir);
+  await launchDetachedShell(config.openClawStartCommand, config.rootDir, buildOpenClawEnvironment(config));
   return waitForService(() => checkOpenClaw(config));
 };
 
@@ -326,7 +575,9 @@ export const ensureN8n = async (config: RuntimeConfig): Promise<ServiceStatus> =
     };
   }
 
-  const launch = await runShellCommand(config.n8nStartCommand, config.rootDir);
+  const launch = await runShellCommand(config.n8nStartCommand, config.rootDir, {
+    N8N_HOST_PORT: String(config.n8nHostPort),
+  });
   if (launch.code !== 0) {
     return {
       ok: false,

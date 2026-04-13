@@ -86,7 +86,7 @@ The repo now ships a local LM Studio MCP server so LM Studio Chat can directly c
 - `stack_status` for lane readiness
 - `n8n_status`, `n8n_workflows`, and `n8n_executions` for hidden workflow visibility
 - `openjarvis_chat` for helper-lane reasoning
-- `openclaw_chat` when an OpenClaw gateway is configured
+- `openclaw_chat` when the OpenClaw gateway and chat surface are both ready
 - `nemoclaw_status` for sandbox/runtime lane visibility
 - `web_fetch`, `notes_capture`, and `tool_generate` through the local control plane
 
@@ -137,6 +137,8 @@ The starter now treats OpenJarvis, OpenClaw, Hermes, and NemoClaw as one package
 
 On Windows, the default NemoClaw path expects WSL2 plus Docker Desktop and uses the official non-interactive onboard flow with a local Ollama provider. LM Studio remains the front door either way.
 
+OpenClaw is still the sharpest edge in the packaged chain, but bootstrap now manages that edge inside the repo instead of leaning on user-home global state. The package provisions repo-local OpenClaw state under `.runtime/openclaw`, binds a custom `lmstudio` provider to the loaded LM Studio chat model, and fails fast when LM Studio only exposes embeddings or no chat-capable model at all. `OPENCLAW_MODEL` now acts as the package target for matching the loaded LM Studio model rather than as a cosmetic hint.
+
 These runtimes should attach behind LM Studio Chat in the packaged experience rather than forcing teammates to operate multiple chat fronts.
 
 Use `npm run install:lmstudio-mcp` to write the repo MCP entry into `~/.lmstudio/mcp.json`. Bootstrap now does this automatically for the teammate path.
@@ -157,7 +159,9 @@ Bootstrap now imports the generated workflow bundle into n8n as inactive review 
 
 When the repo-managed compose service owns the n8n port, bootstrap also provisions the initial owner and a local public API key under `.runtime/n8n/auth.json` so LM Studio Chat can inspect workflows without sending teammates through the n8n UI first.
 
-If port `5678` is already occupied by another n8n instance, set `N8N_MANAGED_BY_REPO=false` and `N8N_API_KEY=...` in `.env.local` so the package treats that instance as external instead of trying to auto-provision it.
+The repo-managed n8n lane now defaults to host port `5679` so it can coexist with a separate default n8n on `5678`.
+
+If you want the package to target some other existing n8n instance instead, set `N8N_MANAGED_BY_REPO=false`, `N8N_BASE_URL=...`, and `N8N_API_KEY=...` in `.env.local`.
 
 ## Hermes Memory Note
 

@@ -3,7 +3,7 @@ services:
     image: n8nio/n8n:latest
     restart: unless-stopped
     ports:
-      - "5678:5678"
+      - "${N8N_HOST_PORT:-5679}:5678"
     environment:
       - N8N_HOST=127.0.0.1
       - N8N_PORT=5678

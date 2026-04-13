@@ -5,7 +5,7 @@ import { loadRuntimeConfig, type RuntimeConfig } from './env.js';
 import { checkLmStudio } from './lmStudio.js';
 import { resolveLmStudioMcpConfigPath } from './lmstudioMcp.js';
 import { getN8nAccessStatus } from './n8n.js';
-import { checkControlPlane, checkHermes, checkN8n, checkNemoClaw, checkOpenJarvis, ensureControlPlane } from './services.js';
+import { checkControlPlane, checkHermes, checkN8n, checkNemoClaw, checkOpenClaw, checkOpenJarvis, ensureControlPlane } from './services.js';
 
 type ChatCompletionResponse = {
   choices?: Array<{
@@ -88,34 +88,29 @@ const resolvePreferredModel = async (
     return explicitModel.trim();
   }
 
-  if (configuredHint.trim()) {
-    return configuredHint.trim();
-  }
-
   const models = await listModels(baseUrl, apiKey);
   if (models.length === 0) {
     throw new Error('No models were listed by the packaged runtime. Configure a model hint or load a model first.');
   }
 
-  return [...models].sort((left, right) => scorePreferredModel(right) - scorePreferredModel(left))[0];
-};
-
-const checkOpenClaw = async (config: RuntimeConfig): Promise<{ ok: boolean; detail: string }> => {
-  if (!config.openClawEnabled || !config.openClawBaseUrl.trim()) {
-    return { ok: false, detail: 'OpenClaw is expected in this package, but the gateway is not configured' };
-  }
-
-  try {
-    const response = await fetch(`${deriveRootUrl(config.openClawBaseUrl)}/healthz`, {
-      headers: config.openClawApiKey ? { Authorization: `Bearer ${config.openClawApiKey}` } : {},
-    });
-    if (!response.ok) {
-      return { ok: false, detail: `HTTP ${response.status}` };
+  if (configuredHint.trim()) {
+    const exactMatch = models.find((item) => item.toLowerCase() === configuredHint.trim().toLowerCase());
+    if (exactMatch) {
+      return exactMatch;
     }
-    return { ok: true, detail: 'reachable' };
-  } catch (error) {
-    return { ok: false, detail: error instanceof Error ? error.message : 'OpenClaw unreachable' };
+
+    const normalizedHint = configuredHint.trim().toLowerCase().replace(/[^a-z0-9]+/gu, '');
+    const fuzzyMatch = models.find((item) => item.toLowerCase().replace(/[^a-z0-9]+/gu, '').includes(normalizedHint));
+    if (fuzzyMatch) {
+      return fuzzyMatch;
+    }
   }
+
+  if (models.length === 1) {
+    return models[0];
+  }
+
+  return [...models].sort((left, right) => scorePreferredModel(right) - scorePreferredModel(left))[0];
 };
 
 const callOpenAICompatibleChat = async (
@@ -189,7 +184,7 @@ const buildServer = async (rootDir: string): Promise<McpServer> => {
         'LM Studio Chat is the human-facing front door for this local package.',
         'Use stack_status to inspect the local runtime before routing work.',
         'Use openjarvis_chat when you need the packaged OpenJarvis runtime inside the local chain.',
-        'Use openclaw_chat through the packaged OpenClaw gateway once it is reachable.',
+        'Use openclaw_chat only after the packaged OpenClaw gateway and its chat surface are both ready.',
         'Use n8n_status, n8n_workflows, and n8n_executions when LM Studio Chat needs visibility into the hidden workflow engine.',
         'Use hermes_status to inspect the packaged Hermes runtime when you need agent-side diagnostics.',
         'Use web_fetch, notes_capture, and tool_generate for deterministic local automation through the control plane.',
@@ -324,7 +319,7 @@ const buildServer = async (rootDir: string): Promise<McpServer> => {
   server.registerTool(
     'openclaw_chat',
     {
-      description: 'Route a prompt through the packaged OpenClaw gateway behind LM Studio Chat.',
+      description: 'Route a prompt through the packaged OpenClaw gateway behind LM Studio Chat once the gateway chat surface and OpenClaw agent auth are ready.',
       inputSchema: z.object({
         prompt: z.string().min(1).describe('User prompt to delegate to OpenClaw'),
         model: z.string().optional().describe('Optional explicit OpenClaw model override'),

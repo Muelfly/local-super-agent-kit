@@ -100,6 +100,24 @@ If doctor says LM Studio is unreachable, the most common cause is that the deskt
 
 On Windows, the default NemoClaw path expects WSL2 plus Docker Desktop and uses the official non-interactive onboard flow. The default provider is local Ollama so the packaged chain stays local-first without forcing an NVIDIA key.
 
+### Repo n8n Port
+
+The repo-managed n8n lane should not fight with an operator's existing default n8n instance. Keep the packaged compose service on host port `5679` by default and only point back to some other n8n with `N8N_MANAGED_BY_REPO=false`, `N8N_BASE_URL`, and `N8N_API_KEY` when that is intentional.
+
+### OpenClaw Health Versus Chat
+
+Do not treat a green OpenClaw health check as proof that the packaged chat lane is usable.
+
+- the package now writes repo-local OpenClaw state under `.runtime/openclaw`
+- bootstrap binds OpenClaw to the loaded LM Studio chat model through a custom local provider before the lane is considered ready
+- doctor will now fail early if LM Studio has no chat-capable model loaded, because that still breaks the OpenClaw lane even when `/healthz` is green
+
+In the default Windows packaging shape, the decisive OpenClaw state is now repo-local rather than user-home global.
+
+- the package-local binding lives in `.runtime/openclaw/openclaw.json`
+- `OPENCLAW_MODEL` now participates in the LM Studio model match instead of acting as a no-op hint
+- if the lane fails, check the loaded LM Studio model ids first and only fall back to user-home OpenClaw state if you intentionally override the repo-local package path
+
 ### LM Studio Chat First
 
 The package should not ask teammates to choose among multiple assistant front ends on day one.

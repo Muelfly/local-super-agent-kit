@@ -88,9 +88,18 @@ export const commandExists = async (command: string, cwd: string): Promise<boole
   return probe.code === 0;
 };
 
-export const launchDetached = async (command: string, args: string[], cwd: string): Promise<void> => {
+export const launchDetached = async (
+  command: string,
+  args: string[],
+  cwd: string,
+  environment: CommandEnvironment = {},
+): Promise<void> => {
   const child = spawn(command, args, {
     cwd,
+    env: {
+      ...process.env,
+      ...environment,
+    },
     detached: true,
     stdio: 'ignore',
     windowsHide: true,
@@ -98,10 +107,14 @@ export const launchDetached = async (command: string, args: string[], cwd: strin
   child.unref();
 };
 
-export const launchDetachedShell = async (commandLine: string, cwd: string): Promise<void> => {
+export const launchDetachedShell = async (
+  commandLine: string,
+  cwd: string,
+  environment: CommandEnvironment = {},
+): Promise<void> => {
   if (process.platform === 'win32') {
-    await launchDetached('cmd.exe', ['/d', '/s', '/c', commandLine], cwd);
+    await launchDetached('cmd.exe', ['/d', '/s', '/c', commandLine], cwd, environment);
     return;
   }
-  await launchDetached('sh', ['-lc', commandLine], cwd);
+  await launchDetached('sh', ['-lc', commandLine], cwd, environment);
 };

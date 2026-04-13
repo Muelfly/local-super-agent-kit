@@ -191,6 +191,14 @@ const extractCookiePair = (response: Response, cookieName: string): string | nul
   return null;
 };
 
+const isRetryableAuthRouteState = (response: Response, message: string): boolean => {
+  if (response.status >= 500 || response.status === 404 || response.status === 405) {
+    return true;
+  }
+
+  return /starting up|cannot (get|post|delete)|not found/i.test(message);
+};
+
 const resolveStoredOwnerEmail = (config: RuntimeConfig, stored: Partial<StoredN8nAuthState>): string => {
   return config.n8nOwnerEmail.trim() || stored.email || DEFAULT_OWNER_EMAIL;
 };
@@ -290,7 +298,7 @@ const validateWorkflowApiKey = async (config: RuntimeConfig, apiKey: string): Pr
   }
 };
 
-const setupOwnerIfNeeded = async (config: RuntimeConfig, state: StoredN8nAuthState): Promise<void> => {
+const setupOwnerIfNeeded = async (config: RuntimeConfig, state: StoredN8nAuthState): Promise<string | null> => {
   for (let attempt = 0; attempt < 12; attempt += 1) {
     const response = await fetch(`${normalizeBaseUrl(config.n8nBaseUrl)}/rest/owner/setup`, {
       method: 'POST',
@@ -304,16 +312,17 @@ const setupOwnerIfNeeded = async (config: RuntimeConfig, state: StoredN8nAuthSta
     });
     const payload = await readResponsePayload(response);
     const message = extractMessage(payload);
+    const cookie = extractCookiePair(response, N8N_AUTH_COOKIE);
 
     if (response.ok) {
-      return;
+      return cookie;
     }
 
     if (response.status === 400 && /already setup/i.test(message)) {
-      return;
+      return null;
     }
 
-    if (response.status === 404 || /starting up/i.test(message) || response.status >= 500) {
+    if (isRetryableAuthRouteState(response, message)) {
       await sleep(1_000);
       continue;
     }
@@ -342,7 +351,7 @@ const loginWithRetry = async (config: RuntimeConfig, state: StoredN8nAuthState):
       return cookie;
     }
 
-    if (/starting up/i.test(message) || response.status >= 500) {
+    if (isRetryableAuthRouteState(response, message)) {
       await sleep(1_000);
       continue;
     }
@@ -606,8 +615,8 @@ export const ensureN8nAutomationAccess = async (config: RuntimeConfig): Promise<
     const stored = await readStoredAuthState(config);
     const state = buildProvisioningState(config, stored);
     await persistAuthState(config, state);
-    await setupOwnerIfNeeded(config, state);
-    const cookie = await loginWithRetry(config, state);
+    const ownerSetupCookie = await setupOwnerIfNeeded(config, state);
+    const cookie = ownerSetupCookie ?? await loginWithRetry(config, state);
     await createOrRefreshManagedApiKey(config, state, cookie);
     return await getN8nAccessStatus(config);
   } catch (error) {
