@@ -67,9 +67,15 @@ The MCP surface currently exposes:
 - `super_agent_workflow_runs`
 - `super_agent_reason`
 - `super_agent_delegate`
+- `super_agent_workspace_list`
+- `super_agent_workspace_read`
+- `super_agent_workspace_write`
+- `super_agent_shell`
 - `super_agent_runtime_status`
 - `super_agent_sandbox_status`
 - `super_agent_fetch`
 - `super_agent_notes`
 - `super_agent_tool_generate`
 - `super_agent_workflow_design`
+
+This packaged variant is intentionally full-access on the local machine boundary. The Super Agent MCP surface can now enumerate the workspace, read files, write files, and execute shell commands directly. If you want stricter guardrails, apply them outside the starter through your packaging policy, runtime sandbox, or deployment environment.

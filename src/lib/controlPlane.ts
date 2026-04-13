@@ -1,7 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { appendFile, mkdir, readdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { RuntimeConfig } from './env.js';
 import { resolveConfiguredModelMatch } from './lmStudio.js';
@@ -88,7 +88,39 @@ type N8nExecutionListRequest = {
   status?: string;
 };
 
+type WorkspaceListRequest = {
+  path?: string;
+  recursive?: boolean;
+  includeHidden?: boolean;
+  maxDepth?: number;
+  maxEntries?: number;
+};
+
+type WorkspaceReadRequest = {
+  path?: string;
+  startLine?: number;
+  endLine?: number;
+};
+
+type WorkspaceWriteRequest = {
+  path?: string;
+  content?: string;
+  mode?: 'overwrite' | 'append';
+};
+
+type WorkspaceShellRequest = {
+  command?: string;
+  cwd?: string;
+  timeoutMs?: number;
+};
+
 const MAX_TEXT_PREVIEW = 20_000;
+const MAX_WORKSPACE_LIST_ENTRIES = 500;
+const MAX_WORKSPACE_READ_LINES = 400;
+const MAX_WORKSPACE_WRITE_BYTES = 1_000_000;
+const MAX_WORKSPACE_COMMAND_OUTPUT = 25_000;
+const DEFAULT_WORKSPACE_SHELL_TIMEOUT_MS = 120_000;
+const MAX_WORKSPACE_SHELL_TIMEOUT_MS = 300_000;
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -107,6 +139,53 @@ const relativeToRoot = (config: RuntimeConfig, targetPath: string): string => {
 
 const ensureParentDirectory = async (filePath: string): Promise<void> => {
   await mkdir(path.dirname(filePath), { recursive: true });
+};
+
+const clampInteger = (value: unknown, fallback: number, min: number, max: number): number => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return fallback;
+  }
+
+  return Math.min(max, Math.max(min, Math.trunc(value)));
+};
+
+const isPathInsideRoot = (rootDir: string, targetPath: string): boolean => {
+  const relative = path.relative(rootDir, targetPath);
+  return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+};
+
+const resolveWorkspaceTarget = (config: RuntimeConfig, requestedPath: string | undefined, allowRoot = true): string => {
+  const normalized = typeof requestedPath === 'string' ? requestedPath.trim() : '';
+  if (!normalized) {
+    if (!allowRoot) {
+      throw new Error('A workspace path is required.');
+    }
+
+    return config.rootDir;
+  }
+
+  const target = path.resolve(config.rootDir, normalized);
+  if (!isPathInsideRoot(config.rootDir, target)) {
+    throw new Error('Requested path must stay inside the workspace root.');
+  }
+
+  return target;
+};
+
+const relativeWorkspacePath = (config: RuntimeConfig, targetPath: string): string => {
+  const relative = relativeToRoot(config, targetPath);
+  return relative || '.';
+};
+
+const truncateText = (value: string, maxLength: number): { text: string; truncated: boolean } => {
+  if (value.length <= maxLength) {
+    return { text: value, truncated: false };
+  }
+
+  return {
+    text: `${value.slice(0, maxLength)}\n...[truncated]`,
+    truncated: true,
+  };
 };
 
 const writeJsonFile = async (filePath: string, payload: unknown): Promise<void> => {
@@ -734,6 +813,181 @@ const persistRecord = async (
   return filePath;
 };
 
+const handleWorkspaceList = async (config: RuntimeConfig, request: IncomingMessage, response: ServerResponse): Promise<void> => {
+  const payload = await parseJsonBody<WorkspaceListRequest>(request);
+
+  try {
+    const basePath = resolveWorkspaceTarget(config, payload.path, true);
+    const recursive = payload.recursive === true;
+    const includeHidden = payload.includeHidden === true;
+    const maxDepth = recursive ? clampInteger(payload.maxDepth, 6, 1, 32) : 1;
+    const maxEntries = clampInteger(payload.maxEntries, 200, 1, MAX_WORKSPACE_LIST_ENTRIES);
+    const queue = [{ absolutePath: basePath, depth: 0 }];
+    const entries: Array<{ path: string; type: 'directory' | 'file' | 'symlink' | 'other'; depth: number }> = [];
+
+    while (queue.length > 0 && entries.length < maxEntries) {
+      const current = queue.shift();
+      if (!current) {
+        break;
+      }
+
+      const children = await readdir(current.absolutePath, { withFileTypes: true });
+      children.sort((left, right) => left.name.localeCompare(right.name));
+
+      for (const child of children) {
+        if (!includeHidden && child.name.startsWith('.')) {
+          continue;
+        }
+
+        const absolutePath = path.join(current.absolutePath, child.name);
+        const type = child.isDirectory()
+          ? 'directory'
+          : child.isFile()
+            ? 'file'
+            : child.isSymbolicLink()
+              ? 'symlink'
+              : 'other';
+
+        entries.push({
+          path: relativeWorkspacePath(config, absolutePath),
+          type,
+          depth: current.depth + 1,
+        });
+
+        if (entries.length >= maxEntries) {
+          break;
+        }
+
+        if (recursive && child.isDirectory() && current.depth + 1 < maxDepth) {
+          queue.push({ absolutePath, depth: current.depth + 1 });
+        }
+      }
+    }
+
+    sendJson(response, 200, {
+      ok: true,
+      basePath: relativeWorkspacePath(config, basePath),
+      recursive,
+      includeHidden,
+      maxDepth,
+      maxEntries,
+      entries,
+      truncated: entries.length >= maxEntries,
+    });
+  } catch (error) {
+    sendJson(response, 400, {
+      ok: false,
+      error: error instanceof Error ? error.message : 'Failed to list workspace files.',
+    });
+  }
+};
+
+const handleWorkspaceRead = async (config: RuntimeConfig, request: IncomingMessage, response: ServerResponse): Promise<void> => {
+  const payload = await parseJsonBody<WorkspaceReadRequest>(request);
+
+  try {
+    const targetPath = resolveWorkspaceTarget(config, payload.path, false);
+    const content = await readFile(targetPath, 'utf8');
+    const lines = content === '' ? [] : content.split(/\r?\n/u);
+    const totalLines = lines.length;
+    const startLine = clampInteger(payload.startLine, 1, 1, Math.max(totalLines, 1));
+    const defaultEndLine = Math.min(Math.max(totalLines, 1), startLine + MAX_WORKSPACE_READ_LINES - 1);
+    const endLine = clampInteger(payload.endLine, defaultEndLine, startLine, startLine + MAX_WORKSPACE_READ_LINES - 1);
+    const slice = totalLines === 0 ? [] : lines.slice(startLine - 1, Math.min(endLine, totalLines));
+
+    sendJson(response, 200, {
+      ok: true,
+      path: relativeWorkspacePath(config, targetPath),
+      startLine,
+      endLine: totalLines === 0 ? 0 : Math.min(endLine, totalLines),
+      totalLines,
+      content: slice.join('\n'),
+      truncated: totalLines > 0 && endLine < totalLines,
+    });
+  } catch (error) {
+    sendJson(response, 400, {
+      ok: false,
+      error: error instanceof Error ? error.message : 'Failed to read workspace file.',
+    });
+  }
+};
+
+const handleWorkspaceWrite = async (config: RuntimeConfig, request: IncomingMessage, response: ServerResponse): Promise<void> => {
+  const payload = await parseJsonBody<WorkspaceWriteRequest>(request);
+
+  try {
+    const targetPath = resolveWorkspaceTarget(config, payload.path, false);
+    if (typeof payload.content !== 'string') {
+      sendJson(response, 400, { ok: false, error: 'content must be a string.' });
+      return;
+    }
+
+    const bytes = Buffer.byteLength(payload.content, 'utf8');
+    if (bytes > MAX_WORKSPACE_WRITE_BYTES) {
+      sendJson(response, 400, {
+        ok: false,
+        error: `content exceeds the ${MAX_WORKSPACE_WRITE_BYTES} byte limit for direct workspace writes.`,
+      });
+      return;
+    }
+
+    await ensureParentDirectory(targetPath);
+    const mode = payload.mode === 'append' ? 'append' : 'overwrite';
+    if (mode === 'append' && existsSync(targetPath)) {
+      await appendFile(targetPath, payload.content, 'utf8');
+    } else {
+      await writeFile(targetPath, payload.content, 'utf8');
+    }
+
+    sendJson(response, 200, {
+      ok: true,
+      path: relativeWorkspacePath(config, targetPath),
+      mode,
+      bytesWritten: bytes,
+    });
+  } catch (error) {
+    sendJson(response, 400, {
+      ok: false,
+      error: error instanceof Error ? error.message : 'Failed to write workspace file.',
+    });
+  }
+};
+
+const handleWorkspaceShell = async (config: RuntimeConfig, request: IncomingMessage, response: ServerResponse): Promise<void> => {
+  const payload = await parseJsonBody<WorkspaceShellRequest>(request);
+  const command = typeof payload.command === 'string' ? payload.command.trim() : '';
+
+  if (!command) {
+    sendJson(response, 400, { ok: false, error: 'command is required.' });
+    return;
+  }
+
+  try {
+    const cwd = resolveWorkspaceTarget(config, payload.cwd, true);
+    const timeoutMs = clampInteger(payload.timeoutMs, DEFAULT_WORKSPACE_SHELL_TIMEOUT_MS, 1, MAX_WORKSPACE_SHELL_TIMEOUT_MS);
+    const result = await runShellCommand(command, cwd, {}, { timeoutMs });
+    const stdout = truncateText(result.stdout, MAX_WORKSPACE_COMMAND_OUTPUT);
+    const stderr = truncateText(result.stderr, MAX_WORKSPACE_COMMAND_OUTPUT);
+
+    sendJson(response, 200, {
+      ok: result.code === 0,
+      command,
+      cwd: relativeWorkspacePath(config, cwd),
+      code: result.code,
+      timedOut: result.timedOut === true,
+      stdout: stdout.text,
+      stderr: stderr.text,
+      stdoutTruncated: stdout.truncated,
+      stderrTruncated: stderr.truncated,
+    });
+  } catch (error) {
+    sendJson(response, 400, {
+      ok: false,
+      error: error instanceof Error ? error.message : 'Failed to execute workspace shell command.',
+    });
+  }
+};
+
 const handleWebFetch = async (config: RuntimeConfig, request: IncomingMessage, response: ServerResponse): Promise<void> => {
   const body = await parseJsonBody<{ url?: string }>(request);
   const url = typeof body.url === 'string' ? body.url.trim() : '';
@@ -1045,6 +1299,26 @@ const routeControlPlaneRequest = async (
 
   if (url.pathname === '/api/web.fetch') {
     await handleWebFetch(config, request, response);
+    return;
+  }
+
+  if (url.pathname === '/api/workspace.list') {
+    await handleWorkspaceList(config, request, response);
+    return;
+  }
+
+  if (url.pathname === '/api/workspace.read') {
+    await handleWorkspaceRead(config, request, response);
+    return;
+  }
+
+  if (url.pathname === '/api/workspace.write') {
+    await handleWorkspaceWrite(config, request, response);
+    return;
+  }
+
+  if (url.pathname === '/api/workspace.shell') {
+    await handleWorkspaceShell(config, request, response);
     return;
   }
 

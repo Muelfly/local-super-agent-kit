@@ -4,10 +4,15 @@ import { spawn } from 'node:child_process';
 
 type CommandEnvironment = Record<string, string | undefined>;
 
+type CommandOptions = {
+  timeoutMs?: number;
+};
+
 export type CommandResult = {
   code: number;
   stdout: string;
   stderr: string;
+  timedOut?: boolean;
 };
 
 const quoteCmdArg = (value: string): string => {
@@ -27,6 +32,7 @@ export const runCommand = async (
   args: string[],
   cwd: string,
   environment: CommandEnvironment = {},
+  options: CommandOptions = {},
 ): Promise<CommandResult> => {
   return new Promise((resolve, reject) => {
     const isWindowsShellScript = process.platform === 'win32' && /\.(cmd|bat)$/iu.test(command);
@@ -45,6 +51,15 @@ export const runCommand = async (
       windowsHide: true,
     });
 
+    let resolved = false;
+    let timedOut = false;
+    const timeoutHandle = typeof options.timeoutMs === 'number' && options.timeoutMs > 0
+      ? setTimeout(() => {
+          timedOut = true;
+          child.kill();
+        }, options.timeoutMs)
+      : null;
+
     let stdout = '';
     let stderr = '';
 
@@ -56,12 +71,24 @@ export const runCommand = async (
       stderr += String(chunk);
     });
 
-    child.on('error', reject);
+    child.on('error', (error) => {
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+      }
+      if (!resolved) {
+        reject(error);
+      }
+    });
     child.on('close', (code) => {
+      if (timeoutHandle) {
+        clearTimeout(timeoutHandle);
+      }
+      resolved = true;
       resolve({
-        code: code ?? 1,
+        code: timedOut ? 124 : (code ?? 1),
         stdout: stdout.trim(),
-        stderr: stderr.trim(),
+        stderr: `${stderr.trim()}${timedOut ? `${stderr.trim() ? '\n' : ''}command timed out after ${options.timeoutMs}ms` : ''}`.trim(),
+        timedOut,
       });
     });
   });
@@ -71,10 +98,11 @@ export const runShellCommand = async (
   commandLine: string,
   cwd: string,
   environment: CommandEnvironment = {},
+  options: CommandOptions = {},
 ): Promise<CommandResult> => {
   const shell = process.platform === 'win32' ? 'cmd.exe' : 'sh';
   const args = process.platform === 'win32' ? ['/d', '/s', '/c', commandLine] : ['-lc', commandLine];
-  return runCommand(shell, args, cwd, environment);
+  return runCommand(shell, args, cwd, environment, options);
 };
 
 export const commandExists = async (command: string, cwd: string): Promise<boolean> => {

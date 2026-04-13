@@ -75,6 +75,8 @@ The packaged UX should assume teammates talk to LM Studio Chat first. OpenJarvis
 
 When the LM Studio MCP surface is active, the expected user experience is “I am using Super Agent,” not “I am using model X plus a few tools.” The MCP server now brands itself as `super-agent`, exposes branded tool names, and instructs LM Studio to treat the currently selected chat model as the reasoning shell rather than the product identity.
 
+The current package shape is intentionally not read-only. Super Agent now exposes workspace list/read/write and shell execution through the local control plane by default. That means teammates can ask the packaged agent to inspect files, edit files, and run local commands without a separate in-package approval layer.
+
 ## OpenClaw Chat Lane Reality Check
 
 The current packaged OpenClaw path can look healthier than it really is.
@@ -163,6 +165,10 @@ The visible MCP tool surface inside LM Studio now centers on Super Agent naming:
 - `super_agent_status`
 - `super_agent_reason`
 - `super_agent_delegate`
+- `super_agent_workspace_list`
+- `super_agent_workspace_read`
+- `super_agent_workspace_write`
+- `super_agent_shell`
 - `super_agent_fetch`
 - `super_agent_notes`
 - `super_agent_tool_generate`

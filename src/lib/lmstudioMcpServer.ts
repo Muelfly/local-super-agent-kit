@@ -228,10 +228,13 @@ const buildSuperAgentStatusPayload = (
       hideInternalLaneNamesByDefault: true,
       mentionInternalLanesOnlyWhenDiagnosing: true,
       defaultBehavior: 'Treat the currently selected LM Studio chat model as the reasoning shell and the MCP tool surface as the real product capability layer.',
+      localActionMode: 'full-access',
+      approvalMode: 'handled-outside-package',
     },
     capabilities: {
       reasoning: ['super_agent_reason', 'super_agent_delegate'],
       automation: ['super_agent_fetch', 'super_agent_notes', 'super_agent_tool_generate', 'super_agent_workflow_design'],
+      workspace: ['super_agent_workspace_list', 'super_agent_workspace_read', 'super_agent_workspace_write', 'super_agent_shell'],
       visibility: ['super_agent_status', 'super_agent_automation_status', 'super_agent_workflows', 'super_agent_workflow_runs'],
       runtime: ['super_agent_runtime_status', 'super_agent_sandbox_status'],
     },
@@ -271,8 +274,11 @@ const buildServer = async (rootDir: string): Promise<McpServer> => {
         'Do not frame the experience as the raw base model unless the user explicitly asks about model identity.',
         'Use super_agent_status early when runtime readiness is unclear.',
         'Prefer Super Agent tool names in your planning and replies.',
+        'This package variant intentionally exposes full local workspace and shell authority through the MCP surface.',
+        'Do not invent an extra in-package approval step before using workspace or shell tools when the user asked for action.',
         'Keep OpenJarvis, OpenClaw, Hermes, and NemoClaw internal unless you are diagnosing a runtime issue or the user asks for lane-level details.',
         'Use super_agent_reason and super_agent_delegate for internal reasoning or delegation through packaged runtimes.',
+        'Use super_agent_workspace_list, super_agent_workspace_read, super_agent_workspace_write, and super_agent_shell for direct local action.',
         'Use super_agent_fetch, super_agent_notes, super_agent_tool_generate, and super_agent_workflow_design for deterministic automation through the control plane.',
         'Use super_agent_automation_status, super_agent_workflows, and super_agent_workflow_runs when you need visibility into the hidden workflow engine.',
         'Treat Super Agent as one unified local product regardless of which LM Studio chat model is currently selected.',
@@ -501,6 +507,102 @@ const buildServer = async (rootDir: string): Promise<McpServer> => {
     async ({ url }) => {
       try {
         return asToolResult(await callControlPlane(config, '/api/web.fetch', { url }));
+      } catch (error) {
+        return asToolResult(error instanceof Error ? error.message : String(error), true);
+      }
+    },
+  );
+
+  server.registerTool(
+    'super_agent_workspace_list',
+    {
+      description: 'List files and directories inside the local workspace through the fully unlocked Super Agent control plane.',
+      inputSchema: z.object({
+        path: z.string().optional().describe('Optional workspace-relative directory path; defaults to the workspace root'),
+        recursive: z.boolean().optional().describe('When true, traverse into subdirectories'),
+        includeHidden: z.boolean().optional().describe('When true, include dotfiles and dot-directories'),
+        maxDepth: z.number().int().min(1).max(32).optional().describe('Maximum recursive depth when recursive=true'),
+        maxEntries: z.number().int().min(1).max(500).optional().describe('Maximum number of entries to return'),
+      }),
+    },
+    async ({ path, recursive, includeHidden, maxDepth, maxEntries }) => {
+      try {
+        return asToolResult(await callControlPlane(config, '/api/workspace.list', {
+          path,
+          recursive,
+          includeHidden,
+          maxDepth,
+          maxEntries,
+        }));
+      } catch (error) {
+        return asToolResult(error instanceof Error ? error.message : String(error), true);
+      }
+    },
+  );
+
+  server.registerTool(
+    'super_agent_workspace_read',
+    {
+      description: 'Read a text file from the local workspace through the fully unlocked Super Agent control plane.',
+      inputSchema: z.object({
+        path: z.string().min(1).describe('Workspace-relative file path to read'),
+        startLine: z.number().int().min(1).optional().describe('1-based line number to start reading from'),
+        endLine: z.number().int().min(1).optional().describe('1-based line number to stop reading at'),
+      }),
+    },
+    async ({ path, startLine, endLine }) => {
+      try {
+        return asToolResult(await callControlPlane(config, '/api/workspace.read', {
+          path,
+          startLine,
+          endLine,
+        }));
+      } catch (error) {
+        return asToolResult(error instanceof Error ? error.message : String(error), true);
+      }
+    },
+  );
+
+  server.registerTool(
+    'super_agent_workspace_write',
+    {
+      description: 'Write or append text directly inside the local workspace through the fully unlocked Super Agent control plane.',
+      inputSchema: z.object({
+        path: z.string().min(1).describe('Workspace-relative file path to write'),
+        content: z.string().describe('Full text payload to write'),
+        mode: z.enum(['overwrite', 'append']).optional().describe('Write mode; defaults to overwrite'),
+      }),
+    },
+    async ({ path, content, mode }) => {
+      try {
+        return asToolResult(await callControlPlane(config, '/api/workspace.write', {
+          path,
+          content,
+          mode,
+        }));
+      } catch (error) {
+        return asToolResult(error instanceof Error ? error.message : String(error), true);
+      }
+    },
+  );
+
+  server.registerTool(
+    'super_agent_shell',
+    {
+      description: 'Execute a shell command inside the local workspace through the fully unlocked Super Agent control plane.',
+      inputSchema: z.object({
+        command: z.string().min(1).describe('Shell command line to execute'),
+        cwd: z.string().optional().describe('Optional workspace-relative working directory'),
+        timeoutMs: z.number().int().min(1).max(300000).optional().describe('Optional execution timeout in milliseconds'),
+      }),
+    },
+    async ({ command, cwd, timeoutMs }) => {
+      try {
+        return asToolResult(await callControlPlane(config, '/api/workspace.shell', {
+          command,
+          cwd,
+          timeoutMs,
+        }));
       } catch (error) {
         return asToolResult(error instanceof Error ? error.message : String(error), true);
       }

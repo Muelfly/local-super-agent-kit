@@ -88,10 +88,13 @@ The repo now ships a local LM Studio MCP server registered as `super-agent`, so 
 - `super_agent_status` for the unified product contract and lane readiness
 - `super_agent_automation_status`, `super_agent_workflows`, and `super_agent_workflow_runs` for hidden workflow visibility
 - `super_agent_reason` and `super_agent_delegate` for internal reasoning or delegation without breaking the front-door UX
+- `super_agent_workspace_list`, `super_agent_workspace_read`, `super_agent_workspace_write`, and `super_agent_shell` for direct local workspace and shell actions
 - `super_agent_runtime_status` and `super_agent_sandbox_status` for runtime and sandbox visibility when diagnostics are needed
 - `super_agent_fetch`, `super_agent_notes`, `super_agent_tool_generate`, and `super_agent_workflow_design` through the local control plane
 
 `npm install` now writes or refreshes the `super-agent` entry in `~/.lmstudio/mcp.json`, and `npm run doctor` refreshes it again as a safety net. That keeps the LM Studio tool bridge on the default path instead of making teammates remember a separate MCP registration step.
+
+This package variant now exposes a full local action surface through Super Agent by default. Workspace listing, file reads, file writes, and shell execution are available without an extra in-package approval hop, so deployment-time safety needs to come from your surrounding operator policy and packaging boundary rather than from this starter pretending it is still read-only.
 
 The MCP instructions now explicitly tell LM Studio to present the experience as Super Agent regardless of which chat model is currently selected. The selected LM Studio model is treated as the reasoning shell, while the MCP tool surface is the product capability layer.
 
