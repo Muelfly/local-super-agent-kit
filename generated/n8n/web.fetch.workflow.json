@@ -1,0 +1,113 @@
+{
+  "name": "tool.web.fetch",
+  "nodes": [
+    {
+      "id": "b2c15728-cafd-44f9-94f9-ad7b09bd7257",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "c8c82f30-6206-4e0e-b9ed-cd9d743d902e",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "agent/web-fetch",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "010900eb-fabb-407d-9767-8a5fe1834a70",
+      "name": "Stamp Tool",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        520,
+        300
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "2b0e160a-d823-4967-bac0-843ad8c29d9d",
+              "name": "tool",
+              "value": "web.fetch",
+              "type": "string"
+            },
+            {
+              "id": "0da24cdd-ce5c-41f7-a652-7e6f92343b95",
+              "name": "summary",
+              "value": "Fetch a URL through a deterministic webhook lane.",
+              "type": "string"
+            },
+            {
+              "id": "a392ab1d-20e1-4b21-a738-62a6b455e4ca",
+              "name": "payload",
+              "value": "={{$json.body}}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "21ce876d-3121-4c52-a1dd-de083d0b63c0",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        780,
+        300
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: true, tool: $json.tool, summary: $json.summary, payload: $json.payload, next: \"Replace this placeholder branch with real automation.\" } }}",
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Stamp Tool",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Stamp Tool": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {},
+  "staticData": null,
+  "meta": {
+    "generatedBy": "local-super-agent-kit",
+    "inputSchema": [
+      {
+        "name": "url",
+        "type": "string",
+        "required": true,
+        "description": "Absolute URL to fetch"
+      }
+    ]
+  },
+  "active": false,
+  "tags": [],
+  "versionId": "cbbb7b2e-d639-45d9-abba-311db161c847"
+}

@@ -1,0 +1,53 @@
+{
+  "version": 1,
+  "tools": [
+    {
+      "name": "web.fetch",
+      "summary": "Fetch a URL through a deterministic webhook lane.",
+      "webhookPath": "agent/web-fetch",
+      "responseMode": "responseNode",
+      "inputSchema": [
+        {
+          "name": "url",
+          "type": "string",
+          "required": true,
+          "description": "Absolute URL to fetch"
+        }
+      ]
+    },
+    {
+      "name": "notes.capture",
+      "summary": "Capture a durable note request into the local automation lane.",
+      "webhookPath": "agent/notes-capture",
+      "responseMode": "responseNode",
+      "inputSchema": [
+        {
+          "name": "title",
+          "type": "string",
+          "required": true,
+          "description": "Short note title"
+        },
+        {
+          "name": "content",
+          "type": "string",
+          "required": true,
+          "description": "Markdown content"
+        }
+      ]
+    },
+    {
+      "name": "tool.generate",
+      "summary": "Open a branch where n8n can request a newly generated tool surface.",
+      "webhookPath": "agent/tool-generate",
+      "responseMode": "responseNode",
+      "inputSchema": [
+        {
+          "name": "goal",
+          "type": "string",
+          "required": true,
+          "description": "Desired automation capability"
+        }
+      ]
+    }
+  ]
+}

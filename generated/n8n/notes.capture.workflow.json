@@ -1,0 +1,119 @@
+{
+  "name": "tool.notes.capture",
+  "nodes": [
+    {
+      "id": "cf02ec98-da89-425c-a445-dcea181de931",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "5fa97366-3d82-4393-8901-e5f7ef7176b7",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "agent/notes-capture",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "5d6198d9-7a22-4799-a746-8bdd54d3eac5",
+      "name": "Stamp Tool",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        520,
+        300
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "70660e4b-36ce-4460-bb26-e4827e2905cf",
+              "name": "tool",
+              "value": "notes.capture",
+              "type": "string"
+            },
+            {
+              "id": "5135940c-d637-42a5-b69b-11a5413a81e3",
+              "name": "summary",
+              "value": "Capture a durable note request into the local automation lane.",
+              "type": "string"
+            },
+            {
+              "id": "530e18d5-51f0-4a83-a6bd-0fedadf0bc22",
+              "name": "payload",
+              "value": "={{$json.body}}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "54fd3a7d-a030-4be7-ab59-08dd42514c13",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        780,
+        300
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: true, tool: $json.tool, summary: $json.summary, payload: $json.payload, next: \"Replace this placeholder branch with real automation.\" } }}",
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Stamp Tool",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Stamp Tool": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {},
+  "staticData": null,
+  "meta": {
+    "generatedBy": "local-super-agent-kit",
+    "inputSchema": [
+      {
+        "name": "title",
+        "type": "string",
+        "required": true,
+        "description": "Short note title"
+      },
+      {
+        "name": "content",
+        "type": "string",
+        "required": true,
+        "description": "Markdown content"
+      }
+    ]
+  },
+  "active": false,
+  "tags": [],
+  "versionId": "4ee0b227-7599-4421-8a59-247539494c53"
+}

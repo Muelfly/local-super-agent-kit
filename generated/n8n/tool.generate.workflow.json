@@ -1,0 +1,113 @@
+{
+  "name": "tool.tool.generate",
+  "nodes": [
+    {
+      "id": "f218e441-40fd-4409-b494-9c85026f73be",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        240,
+        300
+      ],
+      "webhookId": "aa81a4b9-f419-453b-a1fc-1536273b8904",
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "agent/tool-generate",
+        "responseMode": "responseNode",
+        "options": {}
+      }
+    },
+    {
+      "id": "cdd8f29e-82d7-4992-8172-8df6911fab8b",
+      "name": "Stamp Tool",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        520,
+        300
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "46399a3b-2fc7-4a22-844a-95cdfc4e15e8",
+              "name": "tool",
+              "value": "tool.generate",
+              "type": "string"
+            },
+            {
+              "id": "1f8e489b-78c7-4833-8871-39601f5d5e75",
+              "name": "summary",
+              "value": "Open a branch where n8n can request a newly generated tool surface.",
+              "type": "string"
+            },
+            {
+              "id": "199d6392-7c0b-47dd-9400-dfd9b492048f",
+              "name": "payload",
+              "value": "={{$json.body}}",
+              "type": "object"
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "id": "56f67962-d8a4-44fc-812a-e6c7db514edc",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        780,
+        300
+      ],
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: true, tool: $json.tool, summary: $json.summary, payload: $json.payload, next: \"Replace this placeholder branch with real automation.\" } }}",
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Stamp Tool",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Stamp Tool": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {},
+  "staticData": null,
+  "meta": {
+    "generatedBy": "local-super-agent-kit",
+    "inputSchema": [
+      {
+        "name": "goal",
+        "type": "string",
+        "required": true,
+        "description": "Desired automation capability"
+      }
+    ]
+  },
+  "active": false,
+  "tags": [],
+  "versionId": "7a0f6e6d-5d88-4da6-8977-1fd9a2077a08"
+}

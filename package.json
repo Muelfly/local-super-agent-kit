@@ -1,0 +1,35 @@
+{
+  "name": "local-super-agent-kit",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "LM Studio-first local super-agent starter for VS Code teams.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "bootstrap:4060ti": "tsx src/cli.ts bootstrap --profile 4060ti-8b",
+    "bootstrap:3060ti": "tsx src/cli.ts bootstrap --profile 3060ti-30b",
+    "apply-profile": "tsx src/cli.ts apply-profile",
+    "doctor": "tsx src/cli.ts doctor",
+    "start:openjarvis": "tsx src/cli.ts start-openjarvis",
+    "start:optional-lanes": "tsx src/cli.ts start-optional-lanes",
+    "chat-sdk:summary": "tsx src/cli.ts chat-sdk-summary",
+    "start:n8n": "tsx src/cli.ts start-n8n",
+    "n8n:surface": "tsx src/cli.ts generate-tool-surface",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@chat-adapter/discord": "^4.25.0",
+    "@chat-adapter/github": "^4.25.0",
+    "@chat-adapter/state-memory": "^4.25.0",
+    "chat": "^4.25.0",
+    "dotenv": "^16.4.7"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.17",
+    "tsx": "^4.19.3",
+    "typescript": "^5.8.3"
+  }
+}

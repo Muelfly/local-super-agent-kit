@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.env
+.env.local
+.n8n-data/
+coverage/
+*.log
+.DS_Store
+Thumbs.db

@@ -1,0 +1,61 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Bootstrap: 4060 Ti 8B",
+      "type": "shell",
+      "command": "npm",
+      "args": ["run", "bootstrap:4060ti"],
+      "problemMatcher": []
+    },
+    {
+      "label": "Bootstrap: 3060 Ti 30B",
+      "type": "shell",
+      "command": "npm",
+      "args": ["run", "bootstrap:3060ti"],
+      "problemMatcher": []
+    },
+    {
+      "label": "Doctor",
+      "type": "shell",
+      "command": "npm",
+      "args": ["run", "doctor"],
+      "problemMatcher": []
+    },
+    {
+      "label": "Start OpenJarvis",
+      "type": "shell",
+      "command": "npm",
+      "args": ["run", "start:openjarvis"],
+      "problemMatcher": []
+    },
+    {
+      "label": "Start Optional Lanes",
+      "type": "shell",
+      "command": "npm",
+      "args": ["run", "start:optional-lanes"],
+      "problemMatcher": []
+    },
+    {
+      "label": "Chat SDK Summary",
+      "type": "shell",
+      "command": "npm",
+      "args": ["run", "chat-sdk:summary"],
+      "problemMatcher": []
+    },
+    {
+      "label": "Start n8n",
+      "type": "shell",
+      "command": "npm",
+      "args": ["run", "start:n8n"],
+      "problemMatcher": []
+    },
+    {
+      "label": "Generate n8n Tool Surface",
+      "type": "shell",
+      "command": "npm",
+      "args": ["run", "n8n:surface"],
+      "problemMatcher": []
+    }
+  ]
+}
