@@ -5,7 +5,7 @@ import { loadRuntimeConfig, type RuntimeConfig } from './env.js';
 import { checkLmStudio } from './lmStudio.js';
 import { resolveLmStudioMcpConfigPath } from './lmstudioMcp.js';
 import { getN8nAccessStatus } from './n8n.js';
-import { checkControlPlane, checkN8n, checkNemoClaw, checkOpenJarvis, ensureControlPlane } from './services.js';
+import { checkControlPlane, checkHermes, checkN8n, checkNemoClaw, checkOpenJarvis, ensureControlPlane } from './services.js';
 
 type ChatCompletionResponse = {
   choices?: Array<{
@@ -94,7 +94,7 @@ const resolvePreferredModel = async (
 
   const models = await listModels(baseUrl, apiKey);
   if (models.length === 0) {
-    throw new Error('No models were listed by the helper lane. Configure a model hint or load a model first.');
+    throw new Error('No models were listed by the packaged runtime. Configure a model hint or load a model first.');
   }
 
   return [...models].sort((left, right) => scorePreferredModel(right) - scorePreferredModel(left))[0];
@@ -102,7 +102,7 @@ const resolvePreferredModel = async (
 
 const checkOpenClaw = async (config: RuntimeConfig): Promise<{ ok: boolean; detail: string }> => {
   if (!config.openClawEnabled || !config.openClawBaseUrl.trim()) {
-    return { ok: true, detail: 'disabled' };
+    return { ok: false, detail: 'OpenClaw is expected in this package, but the gateway is not configured' };
   }
 
   try {
@@ -188,11 +188,12 @@ const buildServer = async (rootDir: string): Promise<McpServer> => {
       instructions: [
         'LM Studio Chat is the human-facing front door for this local package.',
         'Use stack_status to inspect the local runtime before routing work.',
-        'Use openjarvis_chat when you need the OpenJarvis helper lane.',
-        'Use openclaw_chat only when the OpenClaw gateway is configured and reachable.',
+        'Use openjarvis_chat when you need the packaged OpenJarvis runtime inside the local chain.',
+        'Use openclaw_chat through the packaged OpenClaw gateway once it is reachable.',
         'Use n8n_status, n8n_workflows, and n8n_executions when LM Studio Chat needs visibility into the hidden workflow engine.',
+        'Use hermes_status to inspect the packaged Hermes runtime when you need agent-side diagnostics.',
         'Use web_fetch, notes_capture, and tool_generate for deterministic local automation through the control plane.',
-        'NemoClaw is a helper lane for runtime packaging and sandbox status, not the primary chat surface.',
+        'NemoClaw is the sandboxed packaged tail of the local chain, not the primary chat surface.',
       ].join(' '),
     },
   );
@@ -200,17 +201,18 @@ const buildServer = async (rootDir: string): Promise<McpServer> => {
   server.registerTool(
     'stack_status',
     {
-      description: 'Inspect LM Studio, control-plane, n8n, OpenJarvis, OpenClaw, and NemoClaw status behind LM Studio Chat.',
+      description: 'Inspect LM Studio, control-plane, n8n, OpenJarvis, OpenClaw, Hermes, and NemoClaw status behind LM Studio Chat.',
     },
     async () => {
       try {
-        const [lmstudio, controlplane, n8n, n8nAccess, openjarvis, openclaw, nemoclaw] = await Promise.all([
+        const [lmstudio, controlplane, n8n, n8nAccess, openjarvis, openclaw, hermes, nemoclaw] = await Promise.all([
           checkLmStudio(config),
           checkControlPlane(config),
           checkN8n(config),
           getN8nAccessStatus(config),
           checkOpenJarvis(config),
           checkOpenClaw(config),
+          checkHermes(config),
           checkNemoClaw(config),
         ]);
         return asToolResult({
@@ -220,6 +222,7 @@ const buildServer = async (rootDir: string): Promise<McpServer> => {
           n8nAccess,
           openjarvis,
           openclaw,
+          hermes,
           nemoclaw,
           lmStudioMcpConfigPath: resolveLmStudioMcpConfigPath(),
           lmStudioChatFrontDoor: true,
@@ -283,7 +286,7 @@ const buildServer = async (rootDir: string): Promise<McpServer> => {
   server.registerTool(
     'openjarvis_chat',
     {
-      description: 'Route a prompt through the local OpenJarvis helper lane while keeping LM Studio Chat as the final user endpoint.',
+      description: 'Route a prompt through the packaged OpenJarvis runtime while keeping LM Studio Chat as the final user endpoint.',
       inputSchema: z.object({
         prompt: z.string().min(1).describe('User prompt to delegate to OpenJarvis'),
         model: z.string().optional().describe('Optional explicit OpenJarvis model override'),
@@ -321,7 +324,7 @@ const buildServer = async (rootDir: string): Promise<McpServer> => {
   server.registerTool(
     'openclaw_chat',
     {
-      description: 'Route a prompt through the optional OpenClaw gateway behind LM Studio Chat when the helper lane is configured.',
+      description: 'Route a prompt through the packaged OpenClaw gateway behind LM Studio Chat.',
       inputSchema: z.object({
         prompt: z.string().min(1).describe('User prompt to delegate to OpenClaw'),
         model: z.string().optional().describe('Optional explicit OpenClaw model override'),
@@ -332,7 +335,7 @@ const buildServer = async (rootDir: string): Promise<McpServer> => {
     async ({ prompt, model, systemPrompt, temperature }) => {
       try {
         if (!config.openClawEnabled || !config.openClawBaseUrl.trim()) {
-          return asToolResult('OpenClaw is not configured. Set OPENCLAW_ENABLED=true and OPENCLAW_BASE_URL in local env before using this helper lane.', true);
+          return asToolResult('OpenClaw is part of the packaged runtime, but it is not configured correctly. Check OPENCLAW_BASE_URL and rerun bootstrap.', true);
         }
 
         const resolvedModel = await resolvePreferredModel(
@@ -357,9 +360,28 @@ const buildServer = async (rootDir: string): Promise<McpServer> => {
   );
 
   server.registerTool(
+    'hermes_status',
+    {
+      description: 'Inspect the packaged Hermes runtime that ships with the super-agent path.',
+    },
+    async () => {
+      try {
+        const status = await checkHermes(config);
+        return asToolResult({
+          status,
+          command: config.hermesCommand,
+          modelHint: config.hermesModelHint,
+        });
+      } catch (error) {
+        return asToolResult(error instanceof Error ? error.message : String(error), true);
+      }
+    },
+  );
+
+  server.registerTool(
     'nemoclaw_status',
     {
-      description: 'Inspect the optional NemoClaw helper lane that sits behind LM Studio Chat in this packaged design.',
+      description: 'Inspect the packaged NemoClaw sandbox/runtime tail that sits behind LM Studio Chat in this design.',
     },
     async () => {
       try {

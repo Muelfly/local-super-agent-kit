@@ -45,12 +45,13 @@ The profile files are launch hints for teammates. They do not hardcode a permane
 LM Studio Chat should be treated as the operator-facing front door for this starter.
 
 - everyday chat should happen in LM Studio Chat first
-- OpenClaw, NemoClaw, OpenJarvis, and other helper lanes should plug in behind it through local tools, gateways, MCP, or local HTTP surfaces
+- OpenJarvis, OpenClaw, Hermes, and NemoClaw should ship behind it as packaged chain stages through local tools, gateways, MCP, or local HTTP surfaces
+- shared MCP can remain secondary around that packaged chain
 - teammates should not need to decide which assistant UI to open before they can use the package
 
 ## LM Studio MCP Bridge
 
-This repo now ships a local MCP server so LM Studio Chat can reach the control plane and helper lanes without introducing another primary console.
+This repo now ships a local MCP server so LM Studio Chat can reach the control plane and packaged runtime chain without introducing another primary console.
 
 - run `npm run install:lmstudio-mcp` to write the repo entry into `~/.lmstudio/mcp.json`
 - bootstrap now installs that entry automatically for the teammate path
@@ -64,6 +65,7 @@ The MCP surface currently exposes:
 - `n8n_executions`
 - `openjarvis_chat`
 - `openclaw_chat`
+- `hermes_status`
 - `nemoclaw_status`
 - `web_fetch`
 - `notes_capture`

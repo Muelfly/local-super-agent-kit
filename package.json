@@ -8,6 +8,7 @@
     "node": ">=20"
   },
   "scripts": {
+    "bootstrap:auto": "tsx src/cli.ts bootstrap-auto",
     "bootstrap:4060ti": "tsx src/cli.ts bootstrap --profile 4060ti-8b",
     "bootstrap:3060ti": "tsx src/cli.ts bootstrap --profile 3060ti-30b",
     "apply-profile": "tsx src/cli.ts apply-profile",
@@ -17,6 +18,7 @@
     "install:lmstudio-mcp": "tsx src/cli.ts install-lmstudio-mcp",
     "print:lmstudio-mcp": "tsx src/cli.ts print-lmstudio-mcp-config",
     "start:openjarvis": "tsx src/cli.ts start-openjarvis",
+    "start:super-agent-lanes": "tsx src/cli.ts start-optional-lanes",
     "start:optional-lanes": "tsx src/cli.ts start-optional-lanes",
     "chat-sdk:summary": "tsx src/cli.ts chat-sdk-summary",
     "start:n8n": "tsx src/cli.ts start-n8n",

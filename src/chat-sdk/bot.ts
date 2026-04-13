@@ -33,7 +33,7 @@ if (Object.keys(adapters).length === 0) {
 
 const intro = [
   'Local Super-Agent ingress is alive.',
-  'This starter keeps LM Studio local, n8n deterministic, and OpenJarvis or NemoClaw optional.',
+  'This starter keeps LM Studio local, n8n deterministic, and the OpenJarvis, OpenClaw, Hermes, and NemoClaw chain behind the front door.',
   'Keep the ingress thin and route durable automation into your local runtime surfaces.',
 ].join(' ');
 
@@ -67,7 +67,7 @@ bot.onSubscribedMessage(async (thread, message) => {
   if (/status|doctor|health/i.test(incomingText)) {
     await postAndRecord(
       thread,
-      `Run npm run doctor locally to inspect LM Studio, n8n, control-plane, OpenJarvis, NemoClaw, and Chat SDK readiness. Durable ledger entries: ${snapshot.messageCount}.`,
+      `Run npm run doctor locally to inspect LM Studio, n8n, control-plane, OpenJarvis, OpenClaw, Hermes, NemoClaw, and Chat SDK readiness. Durable ledger entries: ${snapshot.messageCount}.`,
     );
     return;
   }

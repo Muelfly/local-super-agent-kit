@@ -51,6 +51,8 @@ const defaultLmStudioCliPaths = (): string[] => {
   ];
 };
 
+const MAX_AUTO_MODEL_CANDIDATES = 3;
+
 export const resolveLmStudioAppPath = (config: RuntimeConfig): string | null => {
   const candidates = [config.lmStudioAppPath, ...(process.platform === 'win32' ? defaultWindowsAppPaths() : [])]
     .map((item) => item.trim())
@@ -65,7 +67,7 @@ export const resolveLmStudioAppPath = (config: RuntimeConfig): string | null => 
   return null;
 };
 
-const resolveLmStudioCliPath = (): string | null => {
+export const resolveLmStudioCliPath = (): string | null => {
   const candidates = defaultLmStudioCliPaths();
   for (const candidate of candidates) {
     if (process.platform !== 'win32' || existsSync(candidate)) {
@@ -136,5 +138,75 @@ export const ensureLmStudio = async (config: RuntimeConfig): Promise<ServiceStat
   return {
     ok: false,
     detail: 'LM Studio app launched, but the local server did not become reachable in time. Try lms server start or enable the local server in LM Studio.',
+  };
+};
+
+const uniqueModelCandidates = (config: RuntimeConfig): string[] => {
+  const candidates = [config.lmStudioModelHint, ...config.lmStudioModelCandidates]
+    .map((item) => item.trim())
+    .filter(Boolean);
+  return [...new Set(candidates)].slice(0, MAX_AUTO_MODEL_CANDIDATES);
+};
+
+export const ensureLmStudioModelBundle = async (config: RuntimeConfig): Promise<ServiceStatus> => {
+  const candidates = uniqueModelCandidates(config);
+  if (candidates.length === 0) {
+    return { ok: true, detail: 'no model candidates configured' };
+  }
+
+  if (!config.lmStudioAutoAcquireModels && !config.lmStudioAutoLoadPrimaryModel) {
+    return { ok: true, detail: `model bundle automation disabled; candidates: ${candidates.join(', ')}` };
+  }
+
+  const runtime = await ensureLmStudio(config);
+  if (!runtime.ok) {
+    return runtime;
+  }
+
+  const cliPath = resolveLmStudioCliPath();
+  if (!cliPath) {
+    return {
+      ok: false,
+      detail: 'LM Studio is reachable, but the bundled lms CLI was not found. Disable model auto-acquire or install the LM Studio CLI.',
+    };
+  }
+
+  const acquired: string[] = [];
+  const acquireFailures: string[] = [];
+
+  if (config.lmStudioAutoAcquireModels) {
+    for (const candidate of candidates) {
+      const result = await runCommand(cliPath, ['get', candidate, '--gguf', '--yes'], config.rootDir);
+      if (result.code === 0) {
+        acquired.push(candidate);
+      } else {
+        acquireFailures.push(`${candidate}: ${result.stderr || result.stdout || 'download failed'}`);
+      }
+    }
+  }
+
+  let loadDetail = 'primary model load skipped';
+  let loadOk = true;
+  if (config.lmStudioAutoLoadPrimaryModel && config.lmStudioModelHint.trim()) {
+    const result = await runCommand(
+      cliPath,
+      ['load', config.lmStudioModelHint.trim(), '--yes', '--identifier', 'local-super-agent'],
+      config.rootDir,
+    );
+    loadOk = result.code === 0;
+    loadDetail = loadOk
+      ? `loaded ${config.lmStudioModelHint.trim()}`
+      : `failed to load ${config.lmStudioModelHint.trim()}: ${result.stderr || result.stdout || 'load failed'}`;
+  }
+
+  const details = [
+    acquired.length > 0 ? `acquired: ${acquired.join(', ')}` : null,
+    acquireFailures.length > 0 ? `acquire warnings: ${acquireFailures.join(' | ')}` : null,
+    loadDetail,
+  ].filter(Boolean);
+
+  return {
+    ok: loadOk,
+    detail: details.join('; '),
   };
 };

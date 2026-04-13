@@ -16,16 +16,25 @@ export type RuntimeConfig = {
   lmStudioAutoLaunch: boolean;
   lmStudioHealthTimeoutMs: number;
   lmStudioModelHint: string;
+  lmStudioModelCandidates: string[];
+  lmStudioAutoAcquireModels: boolean;
+  lmStudioAutoLoadPrimaryModel: boolean;
   lmStudioProfile: string;
   openJarvisEnabled: boolean;
+  openJarvisCommand: string;
   openJarvisBaseUrl: string;
   openJarvisApiKey: string;
+  openJarvisStatusArgs: string[];
   openJarvisServeCommand: string;
   openJarvisModelHint: string;
   openClawEnabled: boolean;
+  openClawCommand: string;
   openClawBaseUrl: string;
   openClawApiKey: string;
   openClawModel: string;
+  openClawStatusArgs: string[];
+  openClawInstallCommand: string;
+  openClawStartCommand: string;
   nemoClawEnabled: boolean;
   nemoClawCommand: string;
   nemoClawStatusArgs: string[];
@@ -33,6 +42,12 @@ export type RuntimeConfig = {
   nemoClawProvider: string;
   nemoClawModel: string;
   nemoClawSandboxName: string;
+  hermesEnabled: boolean;
+  hermesCommand: string;
+  hermesInstallCommand: string;
+  hermesStatusArgs: string[];
+  hermesStartCommand: string;
+  hermesModelHint: string;
   nvidiaApiKey: string;
   n8nEnabled: boolean;
   n8nBaseUrl: string;
@@ -69,6 +84,115 @@ const parseBoolean = (value: string | undefined, fallback: boolean): boolean => 
 const parseInteger = (value: string | undefined, fallback: number): number => {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+};
+
+const quoteShellValue = (value: string): string => {
+  if (!value || !/[\s"]/u.test(value)) {
+    return value;
+  }
+
+  if (process.platform === 'win32') {
+    return `"${value.replace(/"/gu, '""')}"`;
+  }
+
+  return `'${value.replace(/'/gu, `'\\''`)}'`;
+};
+
+const defaultOpenClawCommand = (): string => {
+  if (process.platform !== 'win32') {
+    return 'openclaw';
+  }
+
+  const appData = process.env.APPDATA || path.join(process.env.USERPROFILE || '', 'AppData', 'Roaming');
+  return path.join(appData, 'npm', 'openclaw.cmd');
+};
+
+const defaultHermesCommand = (): string => {
+  if (process.platform !== 'win32') {
+    return 'hermes';
+  }
+
+  return path.join(process.env.USERPROFILE || '', 'bin', 'hermes.cmd');
+};
+
+const defaultHermesInstallCommand = (): string => {
+  if (process.platform === 'win32') {
+    return 'wsl.exe -- bash -lc "mkdir -p ~/.hermes/hermes-agent && python3 -m venv ~/.hermes/hermes-agent/venv && ~/.hermes/hermes-agent/venv/bin/python -m ensurepip --upgrade && ~/.hermes/hermes-agent/venv/bin/python -m pip install --upgrade pip && ~/.hermes/hermes-agent/venv/bin/python -m pip install \'hermes-agent[cli,pty,mcp,acp,cron]\'"';
+  }
+
+  return "mkdir -p ~/.hermes/hermes-agent && python3 -m venv ~/.hermes/hermes-agent/venv && ~/.hermes/hermes-agent/venv/bin/python -m ensurepip --upgrade && ~/.hermes/hermes-agent/venv/bin/python -m pip install --upgrade pip && ~/.hermes/hermes-agent/venv/bin/python -m pip install 'hermes-agent[cli,pty,mcp,acp,cron]' && mkdir -p ~/.local/bin && ln -sf ~/.hermes/hermes-agent/venv/bin/hermes ~/.local/bin/hermes";
+};
+
+const quotePosixValue = (value: string): string => {
+  return `'${value.replace(/'/gu, `'\\''`)}'`;
+};
+
+const resolveRuntimeBinDir = (rootDir: string): string => {
+  return path.join(rootDir, '.runtime', 'bin');
+};
+
+const defaultOpenJarvisCommand = (rootDir: string): string => {
+  const binDir = resolveRuntimeBinDir(rootDir);
+  return path.join(binDir, process.platform === 'win32' ? 'jarvis.cmd' : 'jarvis');
+};
+
+const defaultNemoClawCommand = (rootDir: string): string => {
+  const binDir = resolveRuntimeBinDir(rootDir);
+  return path.join(binDir, process.platform === 'win32' ? 'nemoclaw.cmd' : 'nemoclaw');
+};
+
+const parseServiceBinding = (baseUrl: string, fallbackPort: number): { host: string; port: number } => {
+  try {
+    const parsed = new URL(baseUrl);
+    return {
+      host: parsed.hostname || '127.0.0.1',
+      port: parsed.port ? Number(parsed.port) || fallbackPort : fallbackPort,
+    };
+  } catch {
+    return {
+      host: '127.0.0.1',
+      port: fallbackPort,
+    };
+  }
+};
+
+const defaultOpenJarvisServeCommand = (command: string, baseUrl: string, modelHint: string): string => {
+  const binding = parseServiceBinding(baseUrl, 8000);
+  const args = [
+    `${quoteShellValue(command)} start`,
+    `--host ${quoteShellValue(binding.host)}`,
+    `--port ${binding.port}`,
+    '-e lmstudio',
+  ];
+
+  if (modelHint.trim()) {
+    args.push(`-m ${quoteShellValue(modelHint.trim())}`);
+  }
+
+  return args.join(' ');
+};
+
+const defaultNemoClawSetupCommand = (provider: string, model: string, sandboxName: string): string => {
+  const linuxCommand = [
+    'set -e',
+    'tmpfile=$(mktemp)',
+    'curl -fsSL https://www.nvidia.com/nemoclaw.sh -o "$tmpfile"',
+    [
+      'NON_INTERACTIVE=1',
+      'ACCEPT_THIRD_PARTY_SOFTWARE=1',
+      `NEMOCLAW_PROVIDER=${quotePosixValue(provider)}`,
+      `NEMOCLAW_MODEL=${quotePosixValue(model)}`,
+      `NEMOCLAW_SANDBOX_NAME=${quotePosixValue(sandboxName)}`,
+      'bash "$tmpfile"',
+    ].join(' '),
+    'rm -f "$tmpfile"',
+  ].join('; ');
+
+  if (process.platform === 'win32') {
+    return `wsl.exe -- bash -lc ${quoteShellValue(linuxCommand)}`;
+  }
+
+  return linuxCommand;
 };
 
 const parseEnvText = (content: string): Map<string, string> => {
@@ -112,6 +236,14 @@ export const resolveProfilePath = (rootDir: string, profile: ProfileName): strin
 };
 
 export const applyProfile = async (rootDir: string, profile: ProfileName): Promise<string> => {
+  return applyProfileWithOverrides(rootDir, profile);
+};
+
+export const applyProfileWithOverrides = async (
+  rootDir: string,
+  profile: ProfileName,
+  overrides: Record<string, string> = {},
+): Promise<string> => {
   const basePath = path.join(rootDir, '.env.example');
   const targetPath = path.join(rootDir, '.env.local');
   const profilePath = resolveProfilePath(rootDir, profile);
@@ -119,6 +251,10 @@ export const applyProfile = async (rootDir: string, profile: ProfileName): Promi
   const overlay = await readEnvMap(profilePath);
 
   for (const [key, value] of overlay.entries()) {
+    base.set(key, value);
+  }
+
+  for (const [key, value] of Object.entries(overrides)) {
     base.set(key, value);
   }
 
@@ -149,11 +285,24 @@ const mergedEnv = async (rootDir: string): Promise<Map<string, string>> => {
 
 export const loadRuntimeConfig = async (rootDir: string): Promise<RuntimeConfig> => {
   const env = await mergedEnv(rootDir);
-  const get = (key: string, fallback = ''): string => env.get(key) ?? fallback;
+  const get = (key: string, fallback = ''): string => {
+    const value = env.get(key);
+    return value === undefined || value.trim() === '' ? fallback : value;
+  };
   const runtimeStateDir = get('RUNTIME_STATE_DIR', '.runtime');
   const controlPlaneHost = get('CONTROL_PLANE_HOST', '127.0.0.1');
   const controlPlanePort = parseInteger(get('CONTROL_PLANE_PORT'), 4391);
   const controlPlaneBaseUrl = get('CONTROL_PLANE_BASE_URL', `http://${controlPlaneHost}:${controlPlanePort}`);
+  const lmStudioModelHint = get('LM_STUDIO_MODEL_HINT', 'nemotron-nano-8b');
+  const openJarvisCommand = get('OPENJARVIS_COMMAND', defaultOpenJarvisCommand(rootDir));
+  const openJarvisBaseUrl = get('OPENJARVIS_BASE_URL', 'http://127.0.0.1:8000/v1');
+  const openJarvisModelHint = get('OPENJARVIS_MODEL_HINT', lmStudioModelHint);
+  const openClawCommand = get('OPENCLAW_COMMAND', defaultOpenClawCommand());
+  const nemoClawCommand = get('NEMOCLAW_COMMAND', defaultNemoClawCommand(rootDir));
+  const nemoClawProvider = get('NEMOCLAW_PROVIDER', 'ollama');
+  const nemoClawModel = get('NEMOCLAW_MODEL', 'qwen2.5:7b');
+  const nemoClawSandboxName = get('NEMOCLAW_SANDBOX_NAME', 'local-super-agent');
+  const hermesCommand = get('HERMES_COMMAND', defaultHermesCommand());
 
   return {
     rootDir,
@@ -161,24 +310,42 @@ export const loadRuntimeConfig = async (rootDir: string): Promise<RuntimeConfig>
     lmStudioAppPath: get('LM_STUDIO_APP_PATH'),
     lmStudioAutoLaunch: parseBoolean(get('LM_STUDIO_AUTO_LAUNCH'), true),
     lmStudioHealthTimeoutMs: parseInteger(get('LM_STUDIO_HEALTH_TIMEOUT_MS'), 45_000),
-    lmStudioModelHint: get('LM_STUDIO_MODEL_HINT', 'nemotron-nano-8b'),
+    lmStudioModelHint,
+    lmStudioModelCandidates: get('LM_STUDIO_MODEL_CANDIDATES', '')
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean),
+    lmStudioAutoAcquireModels: parseBoolean(get('LM_STUDIO_AUTO_ACQUIRE_MODELS'), false),
+    lmStudioAutoLoadPrimaryModel: parseBoolean(get('LM_STUDIO_AUTO_LOAD_PRIMARY_MODEL'), false),
     lmStudioProfile: get('LM_STUDIO_PROFILE', '4060ti-8b'),
     openJarvisEnabled: parseBoolean(get('OPENJARVIS_ENABLED'), true),
-    openJarvisBaseUrl: get('OPENJARVIS_BASE_URL', 'http://127.0.0.1:8000/v1'),
+    openJarvisCommand,
+    openJarvisBaseUrl,
     openJarvisApiKey: get('OPENJARVIS_API_KEY'),
-    openJarvisServeCommand: get('OPENJARVIS_SERVE_COMMAND'),
-    openJarvisModelHint: get('OPENJARVIS_MODEL_HINT'),
-    openClawEnabled: parseBoolean(get('OPENCLAW_ENABLED'), false),
-    openClawBaseUrl: get('OPENCLAW_BASE_URL'),
+    openJarvisStatusArgs: get('OPENJARVIS_STATUS_ARGS', 'status').split(' ').map((item) => item.trim()).filter(Boolean),
+    openJarvisServeCommand: get('OPENJARVIS_SERVE_COMMAND', defaultOpenJarvisServeCommand(openJarvisCommand, openJarvisBaseUrl, openJarvisModelHint)),
+    openJarvisModelHint,
+    openClawEnabled: parseBoolean(get('OPENCLAW_ENABLED'), true),
+    openClawCommand,
+    openClawBaseUrl: get('OPENCLAW_BASE_URL', 'http://127.0.0.1:18789/v1'),
     openClawApiKey: get('OPENCLAW_API_KEY'),
     openClawModel: get('OPENCLAW_MODEL'),
-    nemoClawEnabled: parseBoolean(get('NEMOCLAW_ENABLED'), false),
-    nemoClawCommand: get('NEMOCLAW_COMMAND', 'nemoclaw'),
+    openClawStatusArgs: get('OPENCLAW_STATUS_ARGS', 'gateway status').split(' ').map((item) => item.trim()).filter(Boolean),
+    openClawInstallCommand: get('OPENCLAW_INSTALL_COMMAND', 'npm install -g openclaw@latest'),
+    openClawStartCommand: get('OPENCLAW_START_COMMAND', `${quoteShellValue(openClawCommand)} gateway run --allow-unconfigured --bind loopback --auth none --port 18789 --force --verbose`),
+    nemoClawEnabled: parseBoolean(get('NEMOCLAW_ENABLED'), true),
+    nemoClawCommand,
     nemoClawStatusArgs: get('NEMOCLAW_STATUS_ARGS', 'status').split(' ').map((item) => item.trim()).filter(Boolean),
-    nemoClawSetupCommand: get('NEMOCLAW_SETUP_COMMAND'),
-    nemoClawProvider: get('NEMOCLAW_PROVIDER', 'lmstudio'),
-    nemoClawModel: get('NEMOCLAW_MODEL', 'nemotron-nano-8b'),
-    nemoClawSandboxName: get('NEMOCLAW_SANDBOX_NAME', 'local-super-agent'),
+    nemoClawSetupCommand: get('NEMOCLAW_SETUP_COMMAND', defaultNemoClawSetupCommand(nemoClawProvider, nemoClawModel, nemoClawSandboxName)),
+    nemoClawProvider,
+    nemoClawModel,
+    nemoClawSandboxName,
+    hermesEnabled: parseBoolean(get('HERMES_ENABLED'), true),
+    hermesCommand,
+    hermesInstallCommand: get('HERMES_INSTALL_COMMAND', defaultHermesInstallCommand()),
+    hermesStatusArgs: get('HERMES_STATUS_ARGS', 'status --all').split(' ').map((item) => item.trim()).filter(Boolean),
+    hermesStartCommand: get('HERMES_START_COMMAND'),
+    hermesModelHint: get('HERMES_MODEL_HINT'),
     nvidiaApiKey: get('NVIDIA_API_KEY'),
     n8nEnabled: parseBoolean(get('N8N_ENABLED'), true),
     n8nBaseUrl: get('N8N_BASE_URL', 'http://127.0.0.1:5678'),

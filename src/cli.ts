@@ -1,5 +1,20 @@
 #!/usr/bin/env node
-import { defaultRootDir, formatDoctorReport, formatOptionalLaneReport, runApplyProfile, runBootstrap, runChatSdkSummary, runDoctor, runGenerateToolSurface, runInstallLmStudioMcp, runStartControlPlane, runStartN8n, runStartOpenJarvis, runStartOptionalLanes } from './lib/bootstrap.js';
+import {
+  defaultRootDir,
+  formatDoctorReport,
+  formatOptionalLaneReport,
+  runApplyProfile,
+  runBootstrap,
+  runBootstrapAuto,
+  runChatSdkSummary,
+  runDoctor,
+  runGenerateToolSurface,
+  runInstallLmStudioMcp,
+  runStartControlPlane,
+  runStartN8n,
+  runStartOpenJarvis,
+  runStartOptionalLanes,
+} from './lib/bootstrap.js';
 import { serveControlPlane } from './lib/controlPlane.js';
 import { loadRuntimeConfig, type ProfileName } from './lib/env.js';
 import { printLmStudioMcpConfig } from './lib/lmstudioMcp.js';
@@ -27,13 +42,33 @@ const fail = (message: string): never => {
 const main = async (): Promise<void> => {
   const rootDir = defaultRootDir();
 
+  const hasRequiredLaneFailure = (report: { statuses: Record<string, { ok: boolean }>; modelBundleStatus?: { ok: boolean } }): boolean => {
+    return !report.statuses.lmstudio.ok
+      || !report.statuses.n8n.ok
+      || !report.statuses.controlplane.ok
+      || !report.statuses.openjarvis.ok
+      || !report.statuses.openclaw.ok
+      || !report.statuses.nemoclaw.ok
+      || !report.statuses.hermes.ok
+      || Boolean(report.modelBundleStatus && !report.modelBundleStatus.ok);
+  };
+
   switch (command) {
     case 'bootstrap': {
       const profileArg = readOption('--profile') ?? '4060ti-8b';
       const profile = isProfileName(profileArg) ? profileArg : fail(`Unknown profile: ${profileArg}`);
       const report = await runBootstrap(rootDir, profile);
       console.log(formatDoctorReport(report));
-      if (!report.statuses.lmstudio.ok || !report.statuses.n8n.ok || !report.statuses.controlplane.ok) {
+      if (hasRequiredLaneFailure(report)) {
+        process.exitCode = 1;
+      }
+      return;
+    }
+
+    case 'bootstrap-auto': {
+      const report = await runBootstrapAuto(rootDir);
+      console.log(formatDoctorReport(report));
+      if (hasRequiredLaneFailure(report)) {
         process.exitCode = 1;
       }
       return;
@@ -114,7 +149,7 @@ const main = async (): Promise<void> => {
     case 'start-optional-lanes': {
       const statuses = await runStartOptionalLanes(rootDir);
       console.log(formatOptionalLaneReport(statuses));
-      if (!statuses.openjarvis.ok || !statuses.nemoclaw.ok || !statuses.chatsdk.ok) {
+      if (!statuses.openjarvis.ok || !statuses.openclaw.ok || !statuses.nemoclaw.ok || !statuses.hermes.ok || !statuses.chatsdk.ok) {
         process.exitCode = 1;
       }
       return;
@@ -130,7 +165,7 @@ const main = async (): Promise<void> => {
       const config = await loadRuntimeConfig(rootDir);
       const report = await runDoctor(config);
       console.log(formatDoctorReport(report));
-      if (!report.statuses.lmstudio.ok || !report.statuses.n8n.ok || !report.statuses.controlplane.ok) {
+      if (hasRequiredLaneFailure(report)) {
         process.exitCode = 1;
       }
       return;

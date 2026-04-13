@@ -1,3 +1,5 @@
+import { existsSync } from 'node:fs';
+import path from 'node:path';
 import { spawn } from 'node:child_process';
 
 type CommandEnvironment = Record<string, string | undefined>;
@@ -8,6 +10,18 @@ export type CommandResult = {
   stderr: string;
 };
 
+const quoteCmdArg = (value: string): string => {
+  if (value === '') {
+    return '""';
+  }
+
+  if (!/[\s"&()^<>|]/u.test(value)) {
+    return value;
+  }
+
+  return `"${value.replace(/"/gu, '""')}"`;
+};
+
 export const runCommand = async (
   command: string,
   args: string[],
@@ -15,7 +29,13 @@ export const runCommand = async (
   environment: CommandEnvironment = {},
 ): Promise<CommandResult> => {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
+    const isWindowsShellScript = process.platform === 'win32' && /\.(cmd|bat)$/iu.test(command);
+    const spawnCommand = isWindowsShellScript ? 'cmd.exe' : command;
+    const spawnArgs = isWindowsShellScript
+      ? ['/d', '/s', '/c', [quoteCmdArg(command), ...args.map(quoteCmdArg)].join(' ')]
+      : args;
+
+    const child = spawn(spawnCommand, spawnArgs, {
       cwd,
       env: {
         ...process.env,
@@ -58,6 +78,10 @@ export const runShellCommand = async (
 };
 
 export const commandExists = async (command: string, cwd: string): Promise<boolean> => {
+  if (path.isAbsolute(command) || command.includes('\\') || command.includes('/')) {
+    return existsSync(command);
+  }
+
   const probe = process.platform === 'win32'
     ? await runShellCommand(`where ${command}`, cwd)
     : await runShellCommand(`command -v ${command}`, cwd);

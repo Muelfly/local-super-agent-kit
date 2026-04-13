@@ -2,6 +2,13 @@
   "version": "2.0.0",
   "tasks": [
     {
+      "label": "Bootstrap: Auto Detect",
+      "type": "shell",
+      "command": "npm",
+      "args": ["run", "bootstrap:auto"],
+      "problemMatcher": []
+    },
+    {
       "label": "Bootstrap: 4060 Ti 8B",
       "type": "shell",
       "command": "npm",
@@ -48,6 +55,13 @@
       "type": "shell",
       "command": "npm",
       "args": ["run", "start:openjarvis"],
+      "problemMatcher": []
+    },
+    {
+      "label": "Start Super-Agent Lanes",
+      "type": "shell",
+      "command": "npm",
+      "args": ["run", "start:super-agent-lanes"],
       "problemMatcher": []
     },
     {
